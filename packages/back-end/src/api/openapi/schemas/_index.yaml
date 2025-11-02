@@ -1,42 +1,82 @@
 PaginationFields:
-  $ref: './PaginationFields.yaml'
+  $ref: "./PaginationFields.yaml"
 Dimension:
-  $ref: './Dimension.yaml'
+  $ref: "./Dimension.yaml"
 Metric:
-  $ref: './Metric.yaml'
+  $ref: "./Metric.yaml"
 Project:
-  $ref: './Project.yaml'
+  $ref: "./Project.yaml"
+Environment:
+  $ref: "./Environment.yaml"
+Attribute:
+  $ref: "./Attribute.yaml"
 Segment:
-  $ref: './Segment.yaml'
+  $ref: "./Segment.yaml"
+ScheduleRule:
+  $ref: "./ScheduleRule.yaml"
 Feature:
-  $ref: './Feature.yaml'
+  $ref: "./Feature.yaml"
+FeatureWithRevisions:
+  $ref: "./FeatureWithRevisions.yaml"
 FeatureEnvironment:
-  $ref: './FeatureEnvironment.yaml'
+  $ref: "./FeatureEnvironment.yaml"
 FeatureRule:
-  $ref: './FeatureRule.yaml'
+  $ref: "./FeatureRule.yaml"
 FeatureDefinition:
-  $ref: './FeatureDefinition.yaml'
+  $ref: "./FeatureDefinition.yaml"
 FeatureForceRule:
-  $ref: './FeatureForceRule.yaml'
+  $ref: "./FeatureForceRule.yaml"
 FeatureRolloutRule:
-  $ref: './FeatureRolloutRule.yaml'
+  $ref: "./FeatureRolloutRule.yaml"
+FeatureSafeRolloutRule:
+  $ref: "./FeatureSafeRolloutRule.yaml"
 FeatureExperimentRule:
-  $ref: './FeatureExperimentRule.yaml'
+  $ref: "./FeatureExperimentRule.yaml"
+FeatureExperimentRefRule:
+  $ref: "./FeatureExperimentRefRule.yaml"
+FeatureRevision:
+  $ref: "./FeatureRevision.yaml"
 SdkConnection:
-  $ref: './SdkConnection.yaml'
+  $ref: "./SdkConnection.yaml"
 Experiment:
-  $ref: './Experiment.yaml'
+  $ref: "./Experiment.yaml"
+ExperimentSnapshot:
+  $ref: "./ExperimentSnapshot.yaml"
 ExperimentMetric:
-  $ref: './ExperimentMetric.yaml'
+  $ref: "./ExperimentMetric.yaml"
 ExperimentAnalysisSettings:
-  $ref: './ExperimentAnalysisSettings.yaml'
+  $ref: "./ExperimentAnalysisSettings.yaml"
 ExperimentResults:
-  $ref: './ExperimentResults.yaml'
+  $ref: "./ExperimentResults.yaml"
+ExperimentWithEnhancedStatus:
+  $ref: "./ExperimentWithEnhancedStatus.yaml"
 DataSource:
-  $ref: './DataSource.yaml'
+  $ref: "./DataSource.yaml"
 VisualChangeset:
-  $ref: './VisualChangeset.yaml'
+  $ref: "./VisualChangeset.yaml"
 VisualChange:
-  $ref: './VisualChange.yaml'
+  $ref: "./VisualChange.yaml"
 SavedGroup:
-  $ref: './SavedGroup.yaml'
+  $ref: "./SavedGroup.yaml"
+Organization:
+  $ref: "./Organization.yaml"
+FactTable:
+  $ref: "./FactTable.yaml"
+FactTableColumn:
+  $ref: "./FactTableColumn.yaml"
+FactTableFilter:
+  $ref: "./FactTableFilter.yaml"
+FactMetric:
+  $ref: "./FactMetric.yaml"
+MetricAnalysis:
+  $ref: "./MetricAnalysis.yaml"
+Member:
+  $ref: "./Member.yaml"
+Archetype:
+  $ref: "./Archetype.yaml"
+Query:
+  $ref: "./Query.yaml"
+Settings:
+  $ref: "./Settings.yaml"
+CodeRef:
+  $ref: "./CodeRef.yaml"

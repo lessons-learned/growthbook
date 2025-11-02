@@ -1,4 +1,20 @@
-import { UrlTarget, UrlTargetType, VariationRange } from "./types/growthbook";
+import {
+  AutoExperiment,
+  AutoExperimentChangeType,
+  Polyfills,
+  UrlTarget,
+  UrlTargetType,
+  VariationRange,
+} from "./types/growthbook";
+
+const polyfills: Polyfills = {
+  fetch: globalThis.fetch ? globalThis.fetch.bind(globalThis) : undefined,
+  SubtleCrypto: globalThis.crypto ? globalThis.crypto.subtle : undefined,
+  EventSource: globalThis.EventSource,
+};
+export function getPolyfills(): Polyfills {
+  return polyfills;
+}
 
 function hashFnv32a(str: string): number {
   let hval = 0x811c9dc5;
@@ -15,7 +31,7 @@ function hashFnv32a(str: string): number {
 export function hash(
   seed: string,
   value: string,
-  version: number
+  version: number,
 ): number | null {
   // New unbiased hashing algorithm
   if (version === 2) {
@@ -41,7 +57,7 @@ export function inRange(n: number, range: VariationRange): boolean {
 
 export function inNamespace(
   hashValue: string,
-  namespace: [string, number, number]
+  namespace: [string, number, number],
 ): boolean {
   const n = hash("__" + namespace[0], hashValue, 1);
   if (n === null) return false;
@@ -88,7 +104,7 @@ export function isURLTargeted(url: string, targets: UrlTarget[]) {
 function _evalSimpleUrlPart(
   actual: string,
   pattern: string,
-  isPath: boolean
+  isPath: boolean,
 ): boolean {
   try {
     // Escape special regex characters and change wildcard `_____` to `.*`
@@ -114,7 +130,7 @@ function _evalSimpleUrlTarget(actual: URL, pattern: string) {
     // Use "_____" as the wildcard since `*` is not a valid hostname in some browsers
     const expected = new URL(
       pattern.replace(/^([^:/?]*)\./i, "https://$1.").replace(/\*/g, "_____"),
-      "https://_____"
+      "https://_____",
     );
 
     // Compare each part of the URL separately
@@ -133,7 +149,7 @@ function _evalSimpleUrlTarget(actual: URL, pattern: string) {
 
     // If any comparisons fail, the whole thing fails
     return !comps.some(
-      (data) => !_evalSimpleUrlPart(data[0], data[1], data[2])
+      (data) => !_evalSimpleUrlPart(data[0], data[1], data[2]),
     );
   } catch (e) {
     return false;
@@ -143,7 +159,7 @@ function _evalSimpleUrlTarget(actual: URL, pattern: string) {
 function _evalURLTarget(
   url: string,
   type: UrlTargetType,
-  pattern: string
+  pattern: string,
 ): boolean {
   try {
     const parsed = new URL(url, "https://_");
@@ -168,7 +184,7 @@ function _evalURLTarget(
 export function getBucketRanges(
   numVariations: number,
   coverage: number | undefined,
-  weights?: number[]
+  weights?: number[],
 ): VariationRange[] {
   coverage = coverage === undefined ? 1 : coverage;
 
@@ -191,7 +207,7 @@ export function getBucketRanges(
   if (weights.length !== numVariations) {
     if (process.env.NODE_ENV !== "production") {
       console.error(
-        "Experiment.weights array must be the same length as Experiment.variations"
+        "Experiment.weights array must be the same length as Experiment.variations",
       );
     }
     weights = equal;
@@ -218,7 +234,7 @@ export function getBucketRanges(
 export function getQueryStringOverride(
   id: string,
   url: string,
-  numVariations: number
+  numVariations: number,
 ) {
   if (!url) {
     return null;
@@ -257,10 +273,13 @@ const base64ToBuf = (b: string) =>
 export async function decrypt(
   encryptedString: string,
   decryptionKey?: string,
-  subtle?: SubtleCrypto
+  subtle?: SubtleCrypto,
 ): Promise<string> {
   decryptionKey = decryptionKey || "";
-  subtle = subtle || (globalThis.crypto && globalThis.crypto.subtle);
+  subtle =
+    subtle ||
+    (globalThis.crypto && globalThis.crypto.subtle) ||
+    polyfills.SubtleCrypto;
   if (!subtle) {
     throw new Error("No SubtleCrypto implementation found");
   }
@@ -270,17 +289,135 @@ export async function decrypt(
       base64ToBuf(decryptionKey),
       { name: "AES-CBC", length: 128 },
       true,
-      ["encrypt", "decrypt"]
+      ["encrypt", "decrypt"],
     );
     const [iv, cipherText] = encryptedString.split(".");
     const plainTextBuffer = await subtle.decrypt(
       { name: "AES-CBC", iv: base64ToBuf(iv) },
       key,
-      base64ToBuf(cipherText)
+      base64ToBuf(cipherText),
     );
 
     return new TextDecoder().decode(plainTextBuffer);
   } catch (e) {
     throw new Error("Failed to decrypt");
   }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function toString(input: any): string {
+  if (typeof input === "string") return input;
+  return JSON.stringify(input);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function paddedVersionString(input: any): string {
+  if (typeof input === "number") {
+    input = input + "";
+  }
+  if (!input || typeof input !== "string") {
+    input = "0";
+  }
+  // Remove build info and leading `v` if any
+  // Split version into parts (both core version numbers and pre-release tags)
+  // "v1.2.3-rc.1+build123" -> ["1","2","3","rc","1"]
+  const parts = (input as string).replace(/(^v|\+.*$)/g, "").split(/[-.]/);
+
+  // If it's SemVer without a pre-release, add `~` to the end
+  // ["1","0","0"] -> ["1","0","0","~"]
+  // "~" is the largest ASCII character, so this will make "1.0.0" greater than "1.0.0-beta" for example
+  if (parts.length === 3) {
+    parts.push("~");
+  }
+
+  // Left pad each numeric part with spaces so string comparisons will work ("9">"10", but " 9"<"10")
+  // Then, join back together into a single string
+  return parts
+    .map((v) => (v.match(/^[0-9]+$/) ? v.padStart(5, " ") : v))
+    .join("-");
+}
+
+export function loadSDKVersion(): string {
+  let version: string;
+  try {
+    // @ts-expect-error right-hand value to be replaced by build with string literal
+    version = __SDK_VERSION__;
+  } catch (e) {
+    version = "";
+  }
+  return version;
+}
+
+export function mergeQueryStrings(oldUrl: string, newUrl: string): string {
+  let currUrl: URL;
+  let redirectUrl: URL;
+  try {
+    currUrl = new URL(oldUrl);
+    redirectUrl = new URL(newUrl);
+  } catch (e) {
+    console.error(`Unable to merge query strings: ${e}`);
+    return newUrl;
+  }
+
+  currUrl.searchParams.forEach((value, key) => {
+    // skip  if search param already exists in redirectUrl
+    if (redirectUrl.searchParams.has(key)) {
+      return;
+    }
+    redirectUrl.searchParams.set(key, value);
+  });
+
+  return redirectUrl.toString();
+}
+
+function isObj(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
+
+export function getAutoExperimentChangeType(
+  exp: AutoExperiment,
+): AutoExperimentChangeType {
+  if (
+    exp.urlPatterns &&
+    exp.variations.some(
+      (variation) => isObj(variation) && "urlRedirect" in variation,
+    )
+  ) {
+    return "redirect";
+  } else if (
+    exp.variations.some(
+      (variation) =>
+        isObj(variation) &&
+        (variation.domMutations || "js" in variation || "css" in variation),
+    )
+  ) {
+    return "visual";
+  }
+
+  return "unknown";
+}
+
+// Guarantee the promise always resolves within {timeout} ms
+// Resolved value will be `null` when there's an error or it takes too long
+// Note: The promise will continue running in the background, even if the timeout is hit
+export async function promiseTimeout<T>(
+  promise: Promise<T>,
+  timeout?: number,
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (data?: T) => {
+      if (resolved) return;
+      resolved = true;
+      timer && clearTimeout(timer);
+      resolve(data || null);
+    };
+
+    if (timeout) {
+      timer = setTimeout(() => finish(), timeout);
+    }
+
+    promise.then((data) => finish(data)).catch(() => finish());
+  });
 }

@@ -3,10 +3,10 @@ import {
   getFeature,
   getScheduledFeaturesToUpdate,
   updateFeature,
-} from "../models/FeatureModel";
-import { getNextScheduledUpdate } from "../services/features";
-import { getOrganizationById } from "../services/organizations";
-import { logger } from "../util/logger";
+} from "back-end/src/models/FeatureModel";
+import { getNextScheduledUpdate } from "back-end/src/services/features";
+import { getContextForAgendaJobByOrgId } from "back-end/src/services/organizations";
+import { logger } from "back-end/src/util/logger";
 
 type UpdateSingleFeatureJob = Job<{
   featureId: string;
@@ -26,7 +26,7 @@ async function fireUpdateWebhook(agenda: Agenda) {
 
 async function queueFeatureUpdate(
   agenda: Agenda,
-  feature: { id: string; organization: string }
+  feature: { id: string; organization: string },
 ) {
   const job = agenda.create(UPDATE_SINGLE_FEATURE, {
     featureId: feature.id,
@@ -52,37 +52,33 @@ export default async function (agenda: Agenda) {
     }
   });
 
-  agenda.define(
-    UPDATE_SINGLE_FEATURE,
-    { lockLifetime: 30 * 60 * 1000 },
-    updateSingleFeature
-  );
+  agenda.define(UPDATE_SINGLE_FEATURE, updateSingleFeature);
 
   await fireUpdateWebhook(agenda);
 }
 
-async function updateSingleFeature(job: UpdateSingleFeatureJob) {
+const updateSingleFeature = async (job: UpdateSingleFeatureJob) => {
   const featureId = job.attrs.data?.featureId;
   const organization = job.attrs.data?.organization;
-  if (!featureId) return;
+  if (!featureId || !organization) return;
 
-  const org = await getOrganizationById(organization);
-  if (!org) return;
+  const context = await getContextForAgendaJobByOrgId(organization);
 
-  const feature = await getFeature(organization, featureId);
+  const feature = await getFeature(context, featureId);
   if (!feature) return;
 
   try {
     // Recalculate the feature's new nextScheduledUpdate
     const nextScheduledUpdate = getNextScheduledUpdate(
-      feature.environmentSettings || {}
+      feature.environmentSettings || {},
+      context.environments,
     );
 
     // Update the feature in Mongo
-    await updateFeature(org, null, feature, {
+    await updateFeature(context, feature, {
       nextScheduledUpdate: nextScheduledUpdate,
     });
   } catch (e) {
     logger.error(e, "Failed updating feature " + featureId);
   }
-}
+};

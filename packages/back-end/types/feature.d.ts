@@ -1,19 +1,60 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import type { FeatureDefinition, FeatureResult } from "@growthbook/growthbook";
+import { z } from "zod";
+import {
+  simpleSchemaFieldValidator,
+  simpleSchemaValidator,
+  FeatureRule,
+  FeatureInterface,
+} from "back-end/src/validators/features";
 import { UserRef } from "./user";
 
-export type FeatureValueType = "boolean" | "string" | "number" | "json";
+export {
+  FeatureRule,
+  FeatureInterface,
+  FeatureEnvironment,
+  FeatureValueType,
+  ForceRule,
+  ExperimentValue,
+  ExperimentRule,
+  ScheduleRule,
+  ExperimentRefRule,
+  RolloutRule,
+  ExperimentRefVariation,
+  ComputedFeatureInterface,
+} from "back-end/src/validators/features";
 
-export interface FeatureEnvironment {
+export {
+  NamespaceValue,
+  SavedGroupTargeting,
+  FeaturePrerequisite,
+} from "back-end/src/validators/shared";
+
+export type SchemaField = z.infer<typeof simpleSchemaFieldValidator>;
+export type SimpleSchema = z.infer<typeof simpleSchemaValidator>;
+
+export interface JSONSchemaDef {
+  schemaType: "schema" | "simple";
+  schema: string;
+  simple: SimpleSchema;
+  date: Date;
   enabled: boolean;
-  rules: FeatureRule[];
 }
 
 export type LegacyFeatureInterface = FeatureInterface & {
-  /** @deprecated */
   environments?: string[];
-  /** @deprecated */
   rules?: FeatureRule[];
+  revision?: {
+    version: number;
+    comment: string;
+    date: Date;
+    publishedBy: UserRef;
+  };
+  draft?: FeatureDraftChanges;
+  // schemaType and simple may not exist in old feature documents
+  jsonSchema?: Omit<JSONSchemaDef, "schemaType" | "simple"> &
+    Partial<Pick<JSONSchemaDef, "schemaType" | "simple">>;
 };
 
 export interface FeatureDraftChanges {
@@ -25,71 +66,22 @@ export interface FeatureDraftChanges {
   comment?: string;
 }
 
-export interface FeatureInterface {
-  id: string;
-  archived?: boolean;
-  description?: string;
-  organization: string;
-  nextScheduledUpdate?: Date | null;
-  owner: string;
-  project?: string;
-  dateCreated: Date;
-  dateUpdated: Date;
-  valueType: FeatureValueType;
-  defaultValue: string;
-  tags?: string[];
-  environmentSettings: Record<string, FeatureEnvironment>;
-  draft?: FeatureDraftChanges;
-  revision?: {
-    version: number;
-    comment: string;
-    date: Date;
-    publishedBy: UserRef;
-  };
-}
-type ScheduleRule = {
-  timestamp: string | null;
+export interface FeatureTestResult {
+  env: string;
   enabled: boolean;
-};
-export interface BaseRule {
-  description: string;
-  condition?: string;
-  id: string;
-  enabled?: boolean;
-  scheduleRules?: ScheduleRule[];
+  result: null | FeatureResult;
+  defaultValue: boolean | string | object;
+  log?: [string, any][];
+  featureDefinition?: FeatureDefinition;
 }
-
-export interface ForceRule extends BaseRule {
-  type: "force";
-  value: string;
-}
-
-export interface RolloutRule extends BaseRule {
-  type: "rollout";
-  value: string;
-  coverage: number;
-  hashAttribute: string;
-}
-
-type ExperimentValue = {
-  value: string;
-  weight: number;
-  name?: string;
+export type FeatureUsageDataPoint = {
+  t: number;
+  v: Record<string, number>;
 };
 
-export type NamespaceValue = {
-  enabled: boolean;
-  name: string;
-  range: [number, number];
-};
-
-export interface ExperimentRule extends BaseRule {
-  type: "experiment";
-  trackingKey: string;
-  hashAttribute: string;
-  namespace?: NamespaceValue;
-  coverage?: number;
-  values: ExperimentValue[];
+export interface FeatureUsageData {
+  total: number;
+  bySource: FeatureUsageDataPoint[];
+  byValue: FeatureUsageDataPoint[];
+  byRuleId: FeatureUsageDataPoint[];
 }
-
-export type FeatureRule = ForceRule | RolloutRule | ExperimentRule;

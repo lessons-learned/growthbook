@@ -1,7 +1,7 @@
 import React, { FC, useState } from "react";
 import { MemberRoleWithProjects } from "back-end/types/organization";
-import Modal from "../../Modal";
-import UpgradeModal from "../UpgradeModal";
+import Modal from "@/components/Modal";
+import UpgradeModal from "@/components/Settings/UpgradeModal";
 import RoleSelector from "./RoleSelector";
 
 const ChangeRoleModal: FC<{
@@ -18,14 +18,15 @@ const ChangeRoleModal: FC<{
     return (
       <UpgradeModal
         close={() => setUpgradeModal(false)}
-        reason="To enable advanced permissioning,"
         source="advanced-permissions"
+        commercialFeature="advanced-permissions"
       />
     );
   }
 
   return (
     <Modal
+      trackingEventModalType=""
       close={close}
       header="Change Role"
       open={true}

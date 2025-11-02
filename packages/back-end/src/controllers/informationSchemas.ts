@@ -1,26 +1,29 @@
 import { Response } from "express";
-import { queueCreateInformationSchema } from "../jobs/createInformationSchema";
-import { queueUpdateInformationSchema } from "../jobs/updateInformationSchema";
-import { queueUpdateStaleInformationSchemaTable } from "../jobs/updateStaleInformationSchemaTable";
-import { getDataSourceById } from "../models/DataSourceModel";
-import { getInformationSchemaByDatasourceId } from "../models/InformationSchemaModel";
+import { queueCreateInformationSchema } from "back-end/src/jobs/createInformationSchema";
+import { queueUpdateInformationSchema } from "back-end/src/jobs/updateInformationSchema";
+import { queueUpdateStaleInformationSchemaTable } from "back-end/src/jobs/updateStaleInformationSchemaTable";
+import { getDataSourceById } from "back-end/src/models/DataSourceModel";
+import { getInformationSchemaByDatasourceId } from "back-end/src/models/InformationSchemaModel";
 import {
   createInformationSchemaTable,
   getInformationSchemaTableById,
-} from "../models/InformationSchemaTablesModel";
-import { fetchTableData } from "../services/informationSchema";
-import { getOrgFromReq } from "../services/organizations";
-import { AuthRequest } from "../types/AuthRequest";
-import { Column } from "../types/Integration";
-import { getPath } from "../util/informationSchemas";
+} from "back-end/src/models/InformationSchemaTablesModel";
+import {
+  fetchTableData,
+  getInformationSchemaWithPaths,
+} from "back-end/src/services/informationSchema";
+import { getContextFromReq } from "back-end/src/services/organizations";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
+import { Column } from "back-end/src/types/Integration";
 
 export async function getInformationSchema(
   req: AuthRequest<null, { datasourceId: string }>,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
 
-  const datasource = await getDataSourceById(req.params.datasourceId, org.id);
+  const datasource = await getDataSourceById(context, req.params.datasourceId);
 
   if (!datasource) {
     res.status(404).json({
@@ -32,12 +35,14 @@ export async function getInformationSchema(
 
   const informationSchema = await getInformationSchemaByDatasourceId(
     datasource.id,
-    org.id
+    org.id,
   );
 
   res.status(200).json({
     status: 200,
-    informationSchema,
+    informationSchema: informationSchema
+      ? getInformationSchemaWithPaths(informationSchema, datasource.type)
+      : null,
   });
 }
 
@@ -49,15 +54,16 @@ export async function getTableData(
       tableId: string;
     }
   >,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
 
   const { datasourceId, tableId } = req.params;
 
   const informationSchema = await getInformationSchemaByDatasourceId(
     datasourceId,
-    org.id
+    org.id,
   );
 
   if (!informationSchema) {
@@ -68,8 +74,8 @@ export async function getTableData(
   }
 
   const datasource = await getDataSourceById(
+    context,
     informationSchema.datasourceId,
-    org.id
   );
 
   if (!datasource) {
@@ -102,13 +108,8 @@ export async function getTableData(
   }
 
   // Otherwise, the table doesn't exist yet, so we need to create it.
-  const {
-    tableData,
-    refreshMS,
-    databaseName,
-    tableSchema,
-    tableName,
-  } = await fetchTableData(datasource, informationSchema, tableId);
+  const { tableData, refreshMS, databaseName, tableSchema, tableName } =
+    await fetchTableData(context, datasource, informationSchema, tableId);
 
   if (!tableData) {
     res
@@ -122,14 +123,8 @@ export async function getTableData(
       return {
         columnName: row.column_name,
         dataType: row.data_type,
-        path: getPath(datasource.type, {
-          tableCatalog: databaseName,
-          tableSchema: tableSchema,
-          tableName: tableName,
-          columnName: row.column_name,
-        }),
       };
-    }
+    },
   );
 
   // Create the table record in Mongo.
@@ -156,9 +151,9 @@ export async function putTableData(
       tableId: string;
     }
   >,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const { org } = getContextFromReq(req);
   const { tableId } = req.params;
 
   const table = await getInformationSchemaTableById(org.id, tableId);
@@ -178,11 +173,12 @@ export async function putTableData(
 
 export async function postInformationSchema(
   req: AuthRequest<null, { datasourceId: string }>,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
 
-  const datasource = await getDataSourceById(req.params.datasourceId, org.id);
+  const datasource = await getDataSourceById(context, req.params.datasourceId);
 
   if (!datasource) {
     res.status(404).json({
@@ -192,10 +188,9 @@ export async function postInformationSchema(
     return;
   }
 
-  req.checkPermissions(
-    "editDatasourceSettings",
-    datasource?.projects?.length ? datasource.projects : ""
-  );
+  if (!context.permissions.canUpdateDataSourceSettings(datasource)) {
+    context.permissions.throwPermissionError();
+  }
 
   await queueCreateInformationSchema(datasource.id, org.id);
 
@@ -204,12 +199,13 @@ export async function postInformationSchema(
 
 export async function putInformationSchema(
   req: AuthRequest<{ informationSchemaId: string }, { datasourceId: string }>,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
   const { informationSchemaId } = req.body;
 
-  const datasource = await getDataSourceById(req.params.datasourceId, org.id);
+  const datasource = await getDataSourceById(context, req.params.datasourceId);
 
   if (!datasource) {
     res.status(404).json({
@@ -219,15 +215,14 @@ export async function putInformationSchema(
     return;
   }
 
-  req.checkPermissions(
-    "editDatasourceSettings",
-    datasource?.projects?.length ? datasource.projects : ""
-  );
+  if (!context.permissions.canRunSchemaQueries(datasource)) {
+    context.permissions.throwPermissionError();
+  }
 
   await queueUpdateInformationSchema(
     datasource.id,
     org.id,
-    informationSchemaId
+    informationSchemaId,
   );
 
   res.status(200).json({ message: "Job scheduled successfully" });

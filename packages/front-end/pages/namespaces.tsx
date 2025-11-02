@@ -1,14 +1,15 @@
 import { useState, FC } from "react";
 import { Namespaces, NamespaceUsage } from "back-end/types/organization";
-import useApi from "../hooks/useApi";
-import { GBAddCircle } from "../components/Icons";
-import LoadingOverlay from "../components/LoadingOverlay";
-import NamespaceModal from "../components/Experiment/NamespaceModal";
-import useOrgSettings from "../hooks/useOrgSettings";
-import { useUser } from "../services/UserContext";
-import NamespaceTableRow from "../components/Settings/NamespaceTableRow";
-import { useAuth } from "../services/auth";
-import usePermissions from "../hooks/usePermissions";
+import useApi from "@/hooks/useApi";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import NamespaceModal from "@/components/Experiment/NamespaceModal";
+import useOrgSettings from "@/hooks/useOrgSettings";
+import { useUser } from "@/services/UserContext";
+import NamespaceTableRow from "@/components/Settings/NamespaceTableRow";
+import { useAuth } from "@/services/auth";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import Tooltip from "@/components/Tooltip/Tooltip";
+import Button from "@/ui/Button";
 
 export type NamespaceApiResponse = {
   namespaces: NamespaceUsage;
@@ -16,14 +17,14 @@ export type NamespaceApiResponse = {
 
 const NamespacesPage: FC = () => {
   const { data, error } = useApi<NamespaceApiResponse>(
-    `/organization/namespaces`
+    `/organization/namespaces`,
   );
 
-  const permissions = usePermissions();
-  const canEdit = permissions.manageNamespaces;
+  const permissionsUtil = usePermissionsUtil();
+  const canCreate = permissionsUtil.canCreateNamespace();
 
   const { refreshOrganization } = useUser();
-  const { namespaces } = useOrgSettings();
+  const { namespaces = [] } = useOrgSettings();
   const [modalOpen, setModalOpen] = useState(false);
   const [editNamespace, setEditNamespace] = useState<{
     namespace: Namespaces;
@@ -46,7 +47,6 @@ const NamespacesPage: FC = () => {
     <div className="container-fluid pagecontents">
       {modalOpen && (
         <NamespaceModal
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type '{ namespace: Namespaces; experiments: number... Remove this comment to see the full error message
           existing={editNamespace}
           close={() => {
             setModalOpen(false);
@@ -58,27 +58,37 @@ const NamespacesPage: FC = () => {
           }}
         />
       )}
-      <h1>Experiment Namespaces</h1>
-      <p>
+      <div className="row align-items-center mb-1">
+        <div className="col-auto">
+          <h1 className="mb-0">Experiment Namespaces</h1>
+        </div>
+        {canCreate ? (
+          <div className="col-auto ml-auto">
+            <Button onClick={() => setModalOpen(true)}>Add Namespace</Button>
+          </div>
+        ) : null}
+      </div>
+      <p className="text-gray mb-3">
         Namespaces allow you to run mutually exclusive experiments.{" "}
-        {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-        {namespaces?.length > 0 &&
-          "Click a namespace below to see more details about it's current usage."}
+        {namespaces.length > 0 &&
+          "Click a namespace below to see more details about its current usage."}
       </p>
-      {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-      {namespaces?.length > 0 && (
+      {namespaces.length > 0 && (
         <table className="table appbox gbtable table-hover">
           <thead>
             <tr>
               <th>Namespace</th>
+              <th>
+                Namespace ID{" "}
+                <Tooltip body="This id is used as the namespace hash key and cannot be changed" />
+              </th>
               <th>Description</th>
               <th>Active experiments</th>
               <th>Percent available</th>
-              {canEdit && <th style={{ width: 30 }}></th>}
+              <th style={{ width: 30 }}></th>
             </tr>
           </thead>
           <tbody>
-            {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
             {namespaces.map((ns, i) => {
               const experiments = data?.namespaces[ns.name] ?? [];
               return (
@@ -95,9 +105,12 @@ const NamespacesPage: FC = () => {
                     setModalOpen(true);
                   }}
                   onDelete={async () => {
-                    await apiCall(`/organization/namespaces/${ns.name}`, {
-                      method: "DELETE",
-                    });
+                    await apiCall(
+                      `/organization/namespaces/${encodeURIComponent(ns.name)}`,
+                      {
+                        method: "DELETE",
+                      },
+                    );
                     await refreshOrganization();
                   }}
                   onArchive={async () => {
@@ -106,10 +119,13 @@ const NamespacesPage: FC = () => {
                       description: ns.description,
                       status: ns?.status === "inactive" ? "active" : "inactive",
                     };
-                    await apiCall(`/organization/namespaces/${ns.name}`, {
-                      method: "PUT",
-                      body: JSON.stringify(newNamespace),
-                    });
+                    await apiCall(
+                      `/organization/namespaces/${encodeURIComponent(ns.name)}`,
+                      {
+                        method: "PUT",
+                        body: JSON.stringify(newNamespace),
+                      },
+                    );
                     await refreshOrganization();
                   }}
                 />
@@ -117,17 +133,6 @@ const NamespacesPage: FC = () => {
             })}
           </tbody>
         </table>
-      )}
-      {canEdit && (
-        <button
-          className="btn btn-primary"
-          onClick={(e) => {
-            e.preventDefault();
-            setModalOpen(true);
-          }}
-        >
-          <GBAddCircle /> Create Namespace
-        </button>
       )}
     </div>
   );

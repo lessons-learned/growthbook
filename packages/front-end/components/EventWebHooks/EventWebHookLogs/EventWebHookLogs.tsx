@@ -2,7 +2,7 @@ import React, { FC, useCallback, useEffect, useMemo, useState } from "react";
 import _ from "lodash";
 import { EventWebHookLogInterface } from "back-end/types/event-webhook-log";
 import { useRouter } from "next/router";
-import useApi from "../../../hooks/useApi";
+import { useEventWebhookLogs } from "@/hooks/useEventWebhookLogs";
 import { EventWebHookLogItem } from "./EventWebHookLogItem/EventWebHookLogItem";
 import { EventWebHookLogActiveItem } from "./EventWebHookLogActiveItem/EventWebHookLogActiveItem";
 
@@ -31,9 +31,9 @@ export const EventWebHookLogs: FC<EventWebHookLogsProps> = ({
             <table className="table appbox gbtable table-hover">
               <thead>
                 <tr>
-                  <th className="text-center">Result</th>
-                  <th className="text-left">Event</th>
                   <th className="text-left">Timestamp</th>
+                  <th className="text-left">Event</th>
+                  <th className="text=left">Result</th>
                 </tr>
               </thead>
               <tbody>
@@ -65,12 +65,10 @@ export const EventWebHookLogs: FC<EventWebHookLogsProps> = ({
 export const EventWebHookLogsContainer = () => {
   const router = useRouter();
   const { eventwebhookid: eventWebHookId } = router.query;
-  const { data, error } = useApi<{
-    eventWebHookLogs: EventWebHookLogInterface[];
-  }>(`/event-webhooks/logs/${eventWebHookId}`);
+  const { data, error } = useEventWebhookLogs(`${eventWebHookId}`);
 
   const [activeLog, setActiveLog] = useState<EventWebHookLogInterface | null>(
-    null
+    null,
   );
 
   const logLookup: Record<string, EventWebHookLogInterface> = useMemo(() => {
@@ -82,7 +80,7 @@ export const EventWebHookLogsContainer = () => {
       const logToHighlight = logLookup[logId] || null;
       setActiveLog(logToHighlight);
     },
-    [logLookup]
+    [logLookup],
   );
 
   useEffect(
@@ -94,7 +92,7 @@ export const EventWebHookLogsContainer = () => {
 
       setActiveLog(data.eventWebHookLogs[0] || null);
     },
-    [data]
+    [data],
   );
 
   if (error) {

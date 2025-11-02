@@ -1,55 +1,99 @@
 import Stripe from "stripe";
+import { OWNER_JOB_TITLES, USAGE_INTENTS } from "shared/constants";
 import {
   ENV_SCOPED_PERMISSIONS,
   GLOBAL_PERMISSIONS,
   PROJECT_SCOPED_PERMISSIONS,
-} from "../src/util/organization.util";
+  Policy,
+} from "shared/permissions";
+import { z } from "zod";
+import {
+  AccountPlan,
+  CommercialFeature,
+  LicenseInterface,
+  SubscriptionInfo,
+} from "shared/enterprise";
+import { TiktokenModel } from "@dqbd/tiktoken";
+import { environment } from "back-end/src/routers/environment/environment.validators";
+import type { ReqContextClass } from "back-end/src/services/context";
+import { attributeDataTypes } from "back-end/src/util/organization.util";
+import { ApiKeyInterface } from "back-end/types/apikey";
+import { SSOConnectionInterface } from "back-end/types/sso-connection";
+import { TeamInterface } from "back-end/types/team";
+import { AgreementType } from "back-end/src/validators/agreements";
 import { AttributionModel, ImplementationType } from "./experiment";
 import type { PValueCorrection, StatsEngine } from "./stats";
+import {
+  MetricCappingSettings,
+  MetricPriorSettings,
+  MetricWindowSettings,
+} from "./fact-table";
 
-export type EnvScopedPermission = typeof ENV_SCOPED_PERMISSIONS[number];
-export type ProjectScopedPermission = typeof PROJECT_SCOPED_PERMISSIONS[number];
-export type GlobalPermission = typeof GLOBAL_PERMISSIONS[number];
+export type EnvScopedPermission = (typeof ENV_SCOPED_PERMISSIONS)[number];
+export type ProjectScopedPermission =
+  (typeof PROJECT_SCOPED_PERMISSIONS)[number];
+export type GlobalPermission = (typeof GLOBAL_PERMISSIONS)[number];
 
 export type Permission =
   | GlobalPermission
   | EnvScopedPermission
   | ProjectScopedPermission;
 
-export type MemberRole =
+export type PermissionsObject = Partial<Record<Permission, boolean>>;
+
+export type UserPermission = {
+  environments: string[];
+  limitAccessByEnvironment: boolean;
+  permissions: PermissionsObject;
+};
+
+export type UserPermissions = {
+  global: UserPermission;
+  projects: { [key: string]: UserPermission };
+};
+export type RequireReview = {
+  requireReviewOn: boolean;
+  resetReviewOnChange: boolean;
+  environments: string[];
+  projects: string[];
+};
+
+export type OwnerJobTitle = keyof typeof OWNER_JOB_TITLES;
+
+export type UsageIntent = keyof typeof USAGE_INTENTS;
+
+export interface DemographicData {
+  ownerJobTitle?: OwnerJobTitle;
+  ownerUsageIntents?: UsageIntent[];
+}
+
+export interface CreateOrganizationPostBody {
+  company: string;
+  externalId?: string;
+  demographicData?: DemographicData;
+}
+
+export type DefaultMemberRole =
+  | "noaccess"
   | "readonly"
   | "collaborator"
-  | "designer"
+  | "visualEditor"
   | "analyst"
-  | "developer"
   | "engineer"
   | "experimenter"
   | "admin";
 
 export type Role = {
-  id: MemberRole;
+  id: string;
   description: string;
-  permissions: Permission[];
+  policies: Policy[];
 };
 
-export type AccountPlan = "oss" | "starter" | "pro" | "pro_sso" | "enterprise";
-export type CommercialFeature =
-  | "sso"
-  | "advanced-permissions"
-  | "encrypt-features-endpoint"
-  | "schedule-feature-flag"
-  | "override-metrics"
-  | "regression-adjustment"
-  | "sequential-testing"
-  | "audit-logging"
-  | "visual-editor"
-  | "cloud-proxy";
-export type CommercialFeaturesMap = Record<AccountPlan, Set<CommercialFeature>>;
-
 export interface MemberRoleInfo {
-  role: MemberRole;
+  role: string;
   limitAccessByEnvironment: boolean;
   environments: string[];
+  teams?: string[];
 }
 
 export interface ProjectMemberRole extends MemberRoleInfo {
@@ -76,13 +120,19 @@ export interface PendingMember extends MemberRoleWithProjects {
 export interface Member extends MemberRoleWithProjects {
   id: string;
   dateCreated?: Date;
+  externalId?: string;
+  managedByIdp?: boolean;
+  lastLoginDate?: Date;
 }
 
-export interface ExpandedMember extends Member {
+export interface ExpandedMemberInfo {
   email: string;
   name: string;
   verified: boolean;
+  numTeams?: number;
 }
+
+export type ExpandedMember = Member & ExpandedMemberInfo;
 
 export interface NorthStarMetric {
   //enabled: boolean;
@@ -98,29 +148,35 @@ export interface MetricDefaults {
   minimumSampleSize?: number;
   maxPercentageChange?: number;
   minPercentageChange?: number;
+  windowSettings?: MetricWindowSettings;
+  cappingSettings?: MetricCappingSettings;
+  priorSettings?: MetricPriorSettings;
+  targetMDE?: number;
 }
 
 export interface Namespaces {
   name: string;
+  label: string;
   description: string;
   status: "active" | "inactive";
 }
 
-export type SDKAttributeType =
-  | "string"
-  | "number"
-  | "boolean"
-  | "string[]"
-  | "number[]"
-  | "enum";
+export type SDKAttributeFormat = "" | "version" | "date" | "isoCountryCode";
+
+export type SDKAttributeType = (typeof attributeDataTypes)[number];
 
 export type SDKAttribute = {
   property: string;
   datatype: SDKAttributeType;
+  description?: string;
   hashAttribute?: boolean;
   enum?: string;
   archived?: boolean;
+  format?: SDKAttributeFormat;
+  projects?: string[];
+  disableEqualityConditions?: boolean;
 };
+
 export type SDKAttributeSchema = SDKAttribute[];
 
 export type ExperimentUpdateSchedule = {
@@ -129,12 +185,7 @@ export type ExperimentUpdateSchedule = {
   hours?: number;
 };
 
-export type Environment = {
-  id: string;
-  description?: string;
-  toggleOnList?: boolean;
-  defaultState?: boolean;
-};
+export type Environment = z.infer<typeof environment>;
 
 export interface OrganizationSettings {
   visualEditorEnabled?: boolean;
@@ -162,27 +213,56 @@ export interface OrganizationSettings {
   pValueCorrection?: PValueCorrection;
   regressionAdjustmentEnabled?: boolean;
   regressionAdjustmentDays?: number;
+  runHealthTrafficQuery?: boolean;
+  srmThreshold?: number;
+  aiEnabled?: boolean;
+  openAIDefaultModel?: TiktokenModel;
   /** @deprecated */
   implementationTypes?: ImplementationType[];
   attributionModel?: AttributionModel;
   sequentialTestingEnabled?: boolean;
   sequentialTestingTuningParameter?: number;
-}
-
-export interface SubscriptionQuote {
-  currentSeatsPaidFor: number;
-  activeAndInvitedUsers: number;
-  unitPrice: number;
-  discountAmount: number;
-  discountMessage: string;
-  subtotal: number;
-  total: number;
-  additionalSeatPrice: number;
+  displayCurrency?: string;
+  secureAttributeSalt?: string;
+  killswitchConfirmation?: boolean;
+  requireReviews?: boolean | RequireReview[];
+  defaultDataSource?: string;
+  testQueryDays?: number;
+  disableMultiMetricQueries?: boolean;
+  disablePrecomputedDimensions?: boolean;
+  useStickyBucketing?: boolean;
+  useFallbackAttributes?: boolean;
+  codeReferencesEnabled?: boolean;
+  codeRefsBranchesToFilter?: string[];
+  codeRefsPlatformUrl?: string;
+  featureKeyExample?: string; // Example Key of feature flag (e.g. "feature-20240201-name")
+  featureRegexValidator?: string; // Regex to validate feature flag name (e.g. ^.+-\d{8}-.+$)
+  requireProjectForFeatures?: boolean;
+  featureListMarkdown?: string;
+  featurePageMarkdown?: string;
+  experimentListMarkdown?: string;
+  experimentPageMarkdown?: string;
+  metricListMarkdown?: string;
+  metricPageMarkdown?: string;
+  preferredEnvironment?: string | null; // null (or undefined) means "remember previous environment"
+  maxMetricSliceLevels?: number;
+  banditScheduleValue?: number;
+  banditScheduleUnit?: "hours" | "days";
+  banditBurnInValue?: number;
+  banditBurnInUnit?: "hours" | "days";
+  requireExperimentTemplates?: boolean;
+  experimentMinLengthDays?: number;
+  experimentMaxLengthDays?: number;
+  decisionFrameworkEnabled?: boolean;
+  defaultDecisionCriteriaId?: string;
+  disableLegacyMetricCreation?: boolean;
+  blockFileUploads?: boolean;
+  defaultFeatureRulesInAllEnvs?: boolean;
+  savedGroupSizeLimit?: number;
 }
 
 export interface OrganizationConnections {
   slack?: SlackConnection;
-  vercel?: VercelConnection;
 }
 
 export interface SlackConnection {
@@ -204,22 +284,39 @@ export type OrganizationMessage = {
   level: "info" | "danger" | "warning";
 };
 
+// The type used to get member data to calculate usage counts for licenses
+export type OrgMemberInfo = {
+  id: string;
+  invites: { email: string }[];
+  members: {
+    id: string;
+    role: string;
+    projectRoles?: { role: string }[];
+    teams?: string[];
+  }[];
+};
+
 export interface OrganizationInterface {
   id: string;
   url: string;
   dateCreated: Date;
   verifiedDomain?: string;
+  externalId?: string;
   name: string;
   ownerEmail: string;
+  demographicData?: DemographicData;
+  /** @deprecated */
   stripeCustomerId?: string;
   restrictLoginMethod?: string;
   restrictAuthSubPrefix?: string;
+  isVercelIntegration?: boolean;
   freeSeats?: number;
   discountCode?: string;
   priceId?: string;
   disableSelfServeBilling?: boolean;
   freeTrialDate?: Date;
   enterprise?: boolean;
+  /** @deprecated */
   subscription?: {
     id: string;
     qty: number;
@@ -234,6 +331,7 @@ export interface OrganizationInterface {
     hasPaymentMethod?: boolean;
   };
   licenseKey?: string;
+  installationName?: string;
   autoApproveMembers?: boolean;
   members: Member[];
   invites: Invite[];
@@ -241,6 +339,11 @@ export interface OrganizationInterface {
   connections?: OrganizationConnections;
   settings?: OrganizationSettings;
   messages?: OrganizationMessage[];
+  getStartedChecklistItems?: string[];
+  customRoles?: Role[];
+  deactivatedRoles?: string[];
+  disabled?: boolean;
+  setupEventTracker?: string;
 }
 
 export type NamespaceUsage = Record<
@@ -256,26 +359,55 @@ export type NamespaceUsage = Record<
   }[]
 >;
 
-export type LicenseData = {
-  // Unique id for the license key
-  ref: string;
-  // Name of organization on the license
-  sub: string;
-  // Organization ID (keys prior to 12/2022 do not contain this field)
-  org?: string;
-  // Max number of seats
-  qty: number;
-  // Date issued
-  iat: string;
-  // Expiration date
-  exp: string;
-  // If it's a trial or not
-  trial: boolean;
-  // The plan (pro, enterprise, etc.)
-  plan: AccountPlan;
-  /**
-   * Expiration date (old style)
-   * @deprecated
-   */
-  eat?: string;
+export type ReqContext = ReqContextClass;
+
+export type GetOrganizationResponse = {
+  status: 200;
+  organization: OrganizationInterface;
+  members: ExpandedMember[];
+  seatsInUse: number;
+  roles: Role[];
+  agreements: AgreementType[];
+  apiKeys: ApiKeyInterface[];
+  enterpriseSSO: Partial<SSOConnectionInterface> | null;
+  accountPlan: AccountPlan;
+  effectiveAccountPlan: AccountPlan;
+  commercialFeatureLowestPlan?: Partial<Record<CommercialFeature, AccountPlan>>;
+  licenseError: string;
+  commercialFeatures: CommercialFeature[];
+  license: Partial<LicenseInterface> | null;
+  installationName: string | null;
+  subscription: SubscriptionInfo | null;
+  licenseKey?: string;
+  currentUserPermissions: UserPermissions;
+  teams: TeamInterface[];
+  watching: {
+    experiments: string[];
+    features: string[];
+  };
+  usage: OrganizationUsage;
+};
+
+export type DailyUsage = {
+  date: string;
+  requests: number;
+  bandwidth: number;
+};
+
+type UsageLimit = number | "unlimited";
+
+export type UsageLimits = {
+  cdnRequests: UsageLimit;
+  cdnBandwidth: UsageLimit;
+};
+
+export type OrganizationUsage = {
+  limits: {
+    requests: UsageLimit;
+    bandwidth: UsageLimit;
+  };
+  cdn: {
+    lastUpdated: Date;
+    status: "under" | "approaching" | "over";
+  };
 };

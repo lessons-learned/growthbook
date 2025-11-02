@@ -1,40 +1,25 @@
 import Agenda, { Job } from "agenda";
-import {
-  DEFAULT_SEQUENTIAL_TESTING_TUNING_PARAMETER,
-  getScopedSettings,
-} from "shared";
+import { getScopedSettings } from "shared/settings";
 import {
   getExperimentById,
   getExperimentsToUpdate,
   getExperimentsToUpdateLegacy,
   updateExperiment,
-} from "../models/ExperimentModel";
-import { getDataSourceById } from "../models/DataSourceModel";
-import { isEmailEnabled, sendExperimentChangesEmail } from "../services/email";
+} from "back-end/src/models/ExperimentModel";
+import { getDataSourceById } from "back-end/src/models/DataSourceModel";
 import {
   createSnapshot,
-  getExperimentWatchers,
-  getRegressionAdjustmentInfo,
-} from "../services/experiments";
-import { getConfidenceLevelsForOrg } from "../services/organizations";
-import {
-  getLatestSnapshot,
-  updateSnapshot,
-} from "../models/ExperimentSnapshotModel";
-import { ExperimentInterface } from "../../types/experiment";
-import { getStatusEndpoint } from "../services/queries";
-import { getMetricById } from "../models/MetricModel";
-import { EXPERIMENT_REFRESH_FREQUENCY } from "../util/secrets";
-import { analyzeExperimentResults } from "../services/stats";
-import { getReportVariations } from "../services/reports";
-import { findOrganizationById } from "../models/OrganizationModel";
-import { logger } from "../util/logger";
-import {
-  ExperimentSnapshotInterface,
-  ExperimentSnapshotSettings,
-} from "../../types/experiment-snapshot";
-import { orgHasPremiumFeature } from "../util/organization.util";
-import { findProjectById } from "../models/ProjectModel";
+  getAdditionalExperimentAnalysisSettings,
+  getDefaultExperimentAnalysisSettings,
+  getSettingsForSnapshotMetrics,
+  updateExperimentBanditSettings,
+} from "back-end/src/services/experiments";
+import { getContextForAgendaJobByOrgId } from "back-end/src/services/organizations";
+import { getMetricMap } from "back-end/src/models/MetricModel";
+import { notifyAutoUpdate } from "back-end/src/services/experimentNotifications";
+import { EXPERIMENT_REFRESH_FREQUENCY } from "back-end/src/util/secrets";
+import { logger } from "back-end/src/util/logger";
+import { getFactTableMap } from "back-end/src/models/FactTableModel";
 
 // Time between experiment result updates (default 6 hours)
 const UPDATE_EVERY = EXPERIMENT_REFRESH_FREQUENCY * 60 * 60 * 1000;
@@ -59,17 +44,12 @@ export default async function (agenda: Agenda) {
     for (let i = 0; i < experiments.length; i++) {
       await queueExperimentUpdate(
         experiments[i].organization,
-        experiments[i].id
+        experiments[i].id,
       );
     }
   });
 
-  agenda.define(
-    UPDATE_SINGLE_EXP,
-    // This job queries a datasource, which may be slow. Give it 30 minutes to complete.
-    { lockLifetime: 30 * 60 * 1000 },
-    updateSingleExperiment
-  );
+  agenda.define(UPDATE_SINGLE_EXP, updateSingleExperiment);
 
   // Update experiment results
   await startUpdateJob();
@@ -83,7 +63,7 @@ export default async function (agenda: Agenda) {
     for (let i = 0; i < experiments.length; i++) {
       await queueExperimentUpdate(
         experiments[i].organization,
-        experiments[i].id
+        experiments[i].id,
       );
     }
 
@@ -99,7 +79,7 @@ export default async function (agenda: Agenda) {
 
   async function queueExperimentUpdate(
     organization: string,
-    experimentId: string
+    experimentId: string,
   ) {
     const job = agenda.create(UPDATE_SINGLE_EXP, {
       organization,
@@ -115,238 +95,135 @@ export default async function (agenda: Agenda) {
   }
 }
 
-async function updateSingleExperiment(job: UpdateSingleExpJob) {
+const updateSingleExperiment = async (job: UpdateSingleExpJob) => {
   const experimentId = job.attrs.data?.experimentId;
   const orgId = job.attrs.data?.organization;
+
   if (!experimentId || !orgId) return;
 
-  const experiment = await getExperimentById(orgId, experimentId);
-  if (!experiment) return;
+  const context = await getContextForAgendaJobByOrgId(orgId);
 
-  const organization = await findOrganizationById(experiment.organization);
-  if (!organization) return;
+  const { org: organization } = context;
+
+  const experiment = await getExperimentById(context, experimentId);
+  if (!experiment) return;
 
   let project = null;
   if (experiment.project) {
-    project = await findProjectById(experiment.project, organization.id);
+    project = await context.models.projects.getById(experiment.project);
   }
   const { settings: scopedSettings } = getScopedSettings({
-    organization,
+    organization: context.org,
     project: project ?? undefined,
   });
 
-  if (organization?.settings?.updateSchedule?.type === "never") return;
-
-  const hasRegressionAdjustmentFeature = organization
-    ? orgHasPremiumFeature(organization, "regression-adjustment")
-    : false;
-  const hasSequentialTestingFeature = organization
-    ? orgHasPremiumFeature(organization, "sequential-testing")
-    : false;
+  // Disable auto snapshots for the experiment so it doesn't keep trying to update if schedule is off (non-bandits only)
+  if (
+    organization?.settings?.updateSchedule?.type === "never" &&
+    experiment.type !== "multi-armed-bandit"
+  ) {
+    await updateExperiment({
+      context,
+      experiment,
+      changes: {
+        autoSnapshots: false,
+      },
+    });
+    return;
+  }
 
   try {
-    logger.info("Start Refreshing Results for expeirment " + experimentId);
+    logger.info("Start Refreshing Results for experiment " + experimentId);
     const datasource = await getDataSourceById(
+      context,
       experiment.datasource || "",
-      experiment.organization
     );
     if (!datasource) {
       throw new Error("Error refreshing experiment, could not find datasource");
     }
-    const lastSnapshot = await getLatestSnapshot(
-      experiment.id,
-      experiment.phases.length - 1
-    );
 
-    const {
-      regressionAdjustmentEnabled,
-      metricRegressionAdjustmentStatuses,
-    } = await getRegressionAdjustmentInfo(experiment, organization);
+    const { regressionAdjustmentEnabled, settingsForSnapshotMetrics } =
+      await getSettingsForSnapshotMetrics(context, experiment);
 
-    const statsEngine = scopedSettings.statsEngine.value;
-
-    const experimentSnapshotSettings: ExperimentSnapshotSettings = {
-      statsEngine,
-      regressionAdjustmentEnabled:
-        hasRegressionAdjustmentFeature && regressionAdjustmentEnabled,
-      metricRegressionAdjustmentStatuses:
-        metricRegressionAdjustmentStatuses || [],
-      sequentialTestingEnabled:
-        hasSequentialTestingFeature &&
-        statsEngine === "frequentist" &&
-        (experiment?.sequentialTestingEnabled ??
-          !!organization.settings?.sequentialTestingEnabled),
-      sequentialTestingTuningParameter:
-        experiment?.sequentialTestingTuningParameter ??
-        organization.settings?.sequentialTestingTuningParameter ??
-        DEFAULT_SEQUENTIAL_TESTING_TUNING_PARAMETER,
-    };
-
-    const currentSnapshot = await createSnapshot({
+    const analysisSettings = getDefaultExperimentAnalysisSettings(
+      experiment.statsEngine || scopedSettings.statsEngine.value,
       experiment,
       organization,
+      regressionAdjustmentEnabled,
+    );
+
+    const metricMap = await getMetricMap(context);
+    const factTableMap = await getFactTableMap(context);
+
+    let reweight =
+      experiment.type === "multi-armed-bandit" &&
+      experiment.banditStage === "exploit";
+
+    if (experiment.type === "multi-armed-bandit" && !reweight) {
+      // Quick check to see if we're about to enter "exploit" stage and will need to reweight
+      const tempChanges = updateExperimentBanditSettings({
+        experiment,
+        isScheduled: true,
+      });
+      if (tempChanges.banditStage === "exploit") {
+        reweight = true;
+      }
+    }
+
+    const queryRunner = await createSnapshot({
+      experiment,
+      context,
       phaseIndex: experiment.phases.length - 1,
-      experimentSnapshotSettings,
+      defaultAnalysisSettings: analysisSettings,
+      additionalAnalysisSettings:
+        getAdditionalExperimentAnalysisSettings(analysisSettings),
+      settingsForSnapshotMetrics: settingsForSnapshotMetrics || [],
+      metricMap,
+      factTableMap,
+      useCache: true,
+      type: "standard",
+      triggeredBy: "schedule",
+      reweight,
     });
+    await queryRunner.waitForResults();
+    const currentSnapshot = queryRunner.model;
 
-    await new Promise<void>((resolve, reject) => {
-      const check = async () => {
-        const phase = experiment.phases[experiment.phases.length - 1];
-        if (!phase) {
-          reject("Invalid phase");
-          return;
-        }
-        const res = await getStatusEndpoint(
-          currentSnapshot,
-          currentSnapshot.organization,
-          (queryData) => {
-            return analyzeExperimentResults({
-              organization: experiment.organization,
-              variations: getReportVariations(experiment, phase),
-              queryData,
-              statsEngine: currentSnapshot.statsEngine,
-              sequentialTestingEnabled:
-                currentSnapshot.sequentialTestingEnabled ??
-                organization.settings?.sequentialTestingEnabled,
-              sequentialTestingTuningParameter:
-                currentSnapshot.sequentialTestingTuningParameter ??
-                organization.settings?.sequentialTestingTuningParameter,
-            });
-          },
-          async (updates, results, error) => {
-            await updateSnapshot(experiment.organization, currentSnapshot.id, {
-              ...updates,
-              unknownVariations: results?.unknownVariations || [],
-              multipleExposures: results?.multipleExposures || 0,
-              results: results?.dimensions || currentSnapshot.results,
-              error,
-            });
-          },
-          currentSnapshot.error
-        );
-        if (res.queryStatus === "succeeded") {
-          resolve();
-          return;
-        }
-        if (res.queryStatus === "failed") {
-          reject("Queries failed to run");
-          return;
-        }
-        // Check every 10 seconds
-        setTimeout(check, 10000);
-      };
-      // Do the first check after a 2 second delay to quickly handle fast queries
-      setTimeout(check, 2000);
-    });
+    logger.info(
+      "Successfully Refreshed Results for experiment " + experimentId,
+    );
 
-    if (lastSnapshot) {
-      await sendSignificanceEmail(experiment, lastSnapshot, currentSnapshot);
+    if (experiment.type === "multi-armed-bandit") {
+      const changes = updateExperimentBanditSettings({
+        experiment,
+        snapshot: currentSnapshot,
+        reweight:
+          currentSnapshot?.banditResult?.reweight &&
+          experiment.banditStage === "exploit",
+        isScheduled: true,
+      });
+      await updateExperiment({
+        context,
+        experiment,
+        changes,
+      });
     }
   } catch (e) {
     logger.error(e, "Failed to update experiment: " + experimentId);
-    // If we failed to update the experiment, turn off auto-updating for the future
+    // If we failed to update the experiment, turn off auto-updating for the future (non-bandits only)
+    if (experiment.type === "multi-armed-bandit") return;
     try {
       await updateExperiment({
-        organization,
+        context,
         experiment,
-        user: null,
         changes: {
           autoSnapshots: false,
         },
       });
-      // TODO: email user and let them know it failed
+
+      await notifyAutoUpdate({ context, experiment, success: true });
     } catch (e) {
       logger.error(e, "Failed to turn off autoSnapshots: " + experimentId);
+      await notifyAutoUpdate({ context, experiment, success: false });
     }
   }
-}
-
-async function sendSignificanceEmail(
-  experiment: ExperimentInterface,
-  lastSnapshot: ExperimentSnapshotInterface,
-  currentSnapshot: ExperimentSnapshotInterface
-) {
-  // If email is not configured, there's nothing else to do
-  if (!isEmailEnabled()) {
-    return;
-  }
-
-  if (!currentSnapshot?.results?.[0]?.variations) {
-    return;
-  }
-
-  try {
-    // get the org confidence level settings:
-    const { ciUpper, ciLower } = await getConfidenceLevelsForOrg(
-      experiment.organization
-    );
-
-    // check this and the previous snapshot to see if anything changed:
-    const experimentChanges: string[] = [];
-    for (let i = 1; i < currentSnapshot.results[0].variations.length; i++) {
-      const curVar = currentSnapshot.results?.[0]?.variations?.[i];
-      const lastVar = lastSnapshot.results?.[0]?.variations?.[i];
-
-      for (const m in curVar.metrics) {
-        const curMetric = curVar?.metrics?.[m];
-        const lastMetric = lastVar?.metrics?.[m];
-
-        // sanity checks:
-        if (
-          lastMetric?.chanceToWin &&
-          curMetric?.chanceToWin &&
-          curMetric?.value > 150
-        ) {
-          // checks to see if anything changed:
-          if (
-            curMetric.chanceToWin > ciUpper &&
-            lastMetric.chanceToWin < ciUpper
-          ) {
-            // this test variation has gone significant, and won
-            experimentChanges.push(
-              "The metric " +
-                getMetricById(m, experiment.organization) +
-                " for variation " +
-                experiment.variations[i].name +
-                " has reached a " +
-                (curMetric.chanceToWin * 100).toFixed(1) +
-                "% chance to beat baseline"
-            );
-          } else if (
-            curMetric.chanceToWin < ciLower &&
-            lastMetric.chanceToWin > ciLower
-          ) {
-            // this test variation has gone significant, and lost
-            experimentChanges.push(
-              "The metric " +
-                getMetricById(m, experiment.organization) +
-                " for variation " +
-                experiment.variations[i].name +
-                " has dropped to a " +
-                (curMetric.chanceToWin * 100).toFixed(1) +
-                " chance to beat the baseline"
-            );
-          }
-        }
-      }
-    }
-
-    if (experimentChanges.length) {
-      // send an email to any subscribers on this test:
-      const watchers = await getExperimentWatchers(
-        experiment.id,
-        experiment.organization
-      );
-      const userIds = watchers.map((w) => w.userId);
-
-      await sendExperimentChangesEmail(
-        userIds,
-        experiment.id,
-        experiment.name,
-        experimentChanges
-      );
-    }
-  } catch (e) {
-    logger.error(e, "Failed to send significance email");
-  }
-}
+};

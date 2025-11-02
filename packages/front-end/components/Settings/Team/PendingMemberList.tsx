@@ -1,7 +1,7 @@
 import { FC, useState } from "react";
 import { FaCheck, FaTimes, FaUserCheck } from "react-icons/fa";
 import { PendingMember } from "back-end/types/organization";
-import { datetime } from "shared";
+import { datetime } from "shared/dates";
 import { roleHasAccessToEnv, useAuth } from "@/services/auth";
 import ProjectBadges from "@/components/ProjectBadges";
 import DeleteButton from "@/components/DeleteButton/DeleteButton";
@@ -9,6 +9,7 @@ import { useEnvironments } from "@/services/features";
 import MoreMenu from "@/components/Dropdown/MoreMenu";
 import { useDefinitions } from "@/services/DefinitionsContext";
 import ChangeRoleModal from "@/components/Settings/Team/ChangeRoleModal";
+import { useUser } from "@/services/UserContext";
 
 const PendingMemberList: FC<{
   pendingMembers: PendingMember[];
@@ -17,14 +18,19 @@ const PendingMemberList: FC<{
 }> = ({ pendingMembers, mutate, project }) => {
   const { apiCall } = useAuth();
   const [roleModalUser, setRoleModalUser] = useState<PendingMember | null>(
-    null
+    null,
   );
   const { projects } = useDefinitions();
   const environments = useEnvironments();
+  const { organization } = useUser();
 
   return (
     <div className="my-4">
       <h5>Pending Members{` (${pendingMembers.length})`}</h5>
+      <div className="text-muted mb-2">
+        Members who have requested to join this organization. They must be
+        manually approved.
+      </div>
       {roleModalUser && (
         <ChangeRoleModal
           displayInfo={roleModalUser.name || roleModalUser.email}
@@ -80,8 +86,8 @@ const PendingMemberList: FC<{
                         return (
                           <div key={`project-tags-${p.id}`}>
                             <ProjectBadges
+                              resourceType="member"
                               projectIds={[p.id]}
-                              className="badge-ellipsis align-middle font-weight-normal"
                             />
                             — {pr.role}
                           </div>
@@ -92,7 +98,11 @@ const PendingMemberList: FC<{
                   </td>
                 )}
                 {environments.map((env) => {
-                  const access = roleHasAccessToEnv(roleInfo, env.id);
+                  const access = roleHasAccessToEnv(
+                    roleInfo,
+                    env.id,
+                    organization,
+                  );
                   return (
                     <td key={env.id}>
                       {access === "N/A" ? (

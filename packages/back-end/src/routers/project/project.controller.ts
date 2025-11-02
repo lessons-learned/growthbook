@@ -1,22 +1,32 @@
 import type { Response } from "express";
-import { AuthRequest } from "../../types/AuthRequest";
-import { ApiErrorResponse } from "../../../types/api";
-import { getOrgFromReq } from "../../services/organizations";
-import { ProjectInterface, ProjectSettings } from "../../../types/project";
+import { removeProjectFromSavedGroups } from "back-end/src/models/SavedGroupModel";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
+import { ApiErrorResponse } from "back-end/types/api";
+import { getContextFromReq } from "back-end/src/services/organizations";
+import { ProjectInterface, ProjectSettings } from "back-end/types/project";
 import {
-  createProject,
-  deleteProjectById,
-  findProjectById,
-  updateProject,
-  updateProjectSettings,
-} from "../../models/ProjectModel";
-import { removeProjectFromDatasources } from "../../models/DataSourceModel";
-import { removeProjectFromMetrics } from "../../models/MetricModel";
-import { removeProjectFromFeatures } from "../../models/FeatureModel";
-import { removeProjectFromProjectRoles } from "../../models/OrganizationModel";
-import { removeProjectFromExperiments } from "../../models/ExperimentModel";
-import { removeProjectFromSlackIntegration } from "../../models/SlackIntegrationModel";
-import { EventAuditUserForResponseLocals } from "../../events/event-types";
+  deleteAllDataSourcesForAProject,
+  removeProjectFromDatasources,
+} from "back-end/src/models/DataSourceModel";
+import {
+  deleteAllMetricsForAProject,
+  removeProjectFromMetrics,
+} from "back-end/src/models/MetricModel";
+import {
+  deleteAllFeaturesForAProject,
+  removeProjectFromFeatures,
+} from "back-end/src/models/FeatureModel";
+import { removeProjectFromProjectRoles } from "back-end/src/models/OrganizationModel";
+import {
+  deleteAllExperimentsForAProject,
+  removeProjectFromExperiments,
+} from "back-end/src/models/ExperimentModel";
+import {
+  deleteAllSlackIntegrationsForAProject,
+  removeProjectFromSlackIntegration,
+} from "back-end/src/models/SlackIntegrationModel";
+import { EventUserForResponseLocals } from "back-end/src/events/event-types";
+import { deleteAllFactTablesForAProject } from "back-end/src/models/FactTableModel";
 
 // region POST /projects
 
@@ -37,15 +47,17 @@ export const postProject = async (
   req: CreateProjectRequest,
   res: Response<
     CreateProjectResponse | ApiErrorResponse,
-    EventAuditUserForResponseLocals
-  >
+    EventUserForResponseLocals
+  >,
 ) => {
-  req.checkPermissions("manageProjects", "");
+  const context = getContextFromReq(req);
 
+  if (!context.permissions.canCreateProjects()) {
+    context.permissions.throwPermissionError();
+  }
   const { name, description } = req.body;
-  const { org } = getOrgFromReq(req);
 
-  const doc = await createProject(org.id, {
+  const doc = await context.models.projects.create({
     name,
     description,
   });
@@ -80,15 +92,18 @@ export const putProject = async (
   req: PutProjectRequest,
   res: Response<
     PutProjectResponse | ApiErrorResponse,
-    EventAuditUserForResponseLocals
-  >
+    EventUserForResponseLocals
+  >,
 ) => {
   const { id } = req.params;
-  req.checkPermissions("manageProjects", id);
 
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
 
-  const project = await findProjectById(id, org.id);
+  if (!context.permissions.canUpdateProject(id)) {
+    context.permissions.throwPermissionError();
+  }
+
+  const project = await context.models.projects.getById(id);
 
   if (!project) {
     res.status(404).json({
@@ -99,10 +114,9 @@ export const putProject = async (
 
   const { name, description } = req.body;
 
-  await updateProject(id, project.organization, {
+  await context.models.projects.updateById(id, {
     name,
     description,
-    dateUpdated: new Date(),
   });
 
   res.status(200).json({
@@ -114,10 +128,21 @@ export const putProject = async (
 
 // region DELETE /projects/:id
 
-type DeleteProjectRequest = AuthRequest<null, { id: string }>;
+type DeleteProjectRequest = AuthRequest<
+  null,
+  { id: string },
+  {
+    deleteFeatures?: boolean;
+    deleteExperiments?: boolean;
+    deleteMetrics?: boolean;
+    deleteSlackIntegrations?: boolean;
+    deleteDataSources?: boolean;
+    deleteFactTables?: boolean;
+  }
+>;
 
 type DeleteProjectResponse = {
-  status: 200;
+  status: number;
 };
 
 /**
@@ -130,28 +155,157 @@ export const deleteProject = async (
   req: DeleteProjectRequest,
   res: Response<
     DeleteProjectResponse | ApiErrorResponse,
-    EventAuditUserForResponseLocals
-  >
+    EventUserForResponseLocals
+  >,
 ) => {
   const { id } = req.params;
-  req.checkPermissions("manageProjects", id);
+  const {
+    deleteExperiments = false,
+    deleteFeatures = false,
+    deleteMetrics = false,
+    deleteSlackIntegrations = false,
+    deleteDataSources = false,
+    deleteFactTables = false,
+  } = req.query;
+  const context = getContextFromReq(req);
 
-  const { org } = getOrgFromReq(req);
+  if (!context.permissions.canDeleteProject(id)) {
+    context.permissions.throwPermissionError();
+  }
+  const { org } = context;
 
-  await deleteProjectById(id, org.id);
+  await context.models.projects.deleteById(id);
 
   // Cleanup functions from other models
-  await removeProjectFromDatasources(id, org.id);
-  await removeProjectFromMetrics(id, org.id);
-  await removeProjectFromFeatures(id, org, res.locals.eventAudit);
-  await removeProjectFromExperiments(id, org, res.locals.eventAudit);
+  // Clean up data sources
+  if (deleteDataSources) {
+    try {
+      if (!context.permissions.canDeleteDataSource({ projects: [id] })) {
+        context.permissions.throwPermissionError();
+      }
+
+      await deleteAllDataSourcesForAProject({
+        projectId: id,
+        organizationId: org.id,
+      });
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete data sources",
+      });
+    }
+  } else {
+    await removeProjectFromDatasources(id, org.id);
+  }
+
+  // Clean up metrics
+  if (deleteMetrics) {
+    try {
+      if (!context.permissions.canDeleteMetric({ projects: [id] })) {
+        context.permissions.throwPermissionError();
+      }
+      await deleteAllMetricsForAProject({
+        projectId: id,
+        context,
+      });
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete metrics",
+      });
+    }
+  } else {
+    await removeProjectFromMetrics(id, org.id);
+  }
+
+  // Clean up fact tables and metrics
+  if (deleteFactTables) {
+    try {
+      await deleteAllFactTablesForAProject({
+        projectId: id,
+        context,
+      });
+      await context.models.factMetrics.deleteAllFactMetricsForAProject(id);
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete fact tables",
+      });
+    }
+  }
+
+  // Clean up features
+  if (deleteFeatures) {
+    try {
+      if (!context.permissions.canDeleteFeature({ project: id })) {
+        context.permissions.throwPermissionError();
+      }
+
+      await deleteAllFeaturesForAProject({
+        projectId: id,
+        context,
+      });
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete features",
+      });
+    }
+  } else {
+    await removeProjectFromFeatures(context, id);
+  }
+
+  // Clean up experiments
+  if (deleteExperiments) {
+    try {
+      if (!context.permissions.canDeleteExperiment({ project: id })) {
+        context.permissions.throwPermissionError();
+      }
+      await deleteAllExperimentsForAProject({
+        projectId: id,
+        context,
+      });
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete experiments",
+      });
+    }
+  } else {
+    await removeProjectFromExperiments(context, id);
+  }
+
+  // Clean up Slack integrations
+  if (deleteSlackIntegrations) {
+    try {
+      if (!context.permissions.canManageIntegrations()) {
+        context.permissions.throwPermissionError();
+      }
+
+      await deleteAllSlackIntegrationsForAProject({
+        projectId: id,
+        organization: org,
+      });
+    } catch (e) {
+      return res.json({
+        status: 403,
+        message: "Failed to delete Slack integrations",
+      });
+    }
+  } else {
+    await removeProjectFromSlackIntegration({
+      organizationId: org.id,
+      projectId: id,
+    });
+  }
+
   await removeProjectFromProjectRoles(id, org);
-  await removeProjectFromSlackIntegration({
-    organizationId: org.id,
-    projectId: id,
-  });
+
+  await removeProjectFromSavedGroups(id, org.id);
+
   // ideas?
   // report?
+  // dimensions?
   // api endpoints & webhooks?
 
   res.status(200).json({
@@ -171,14 +325,17 @@ type PutProjectSettingsResponse = {
 };
 export const putProjectSettings = async (
   req: PutProjectSettingsRequest,
-  res: Response<PutProjectSettingsResponse | ApiErrorResponse>
+  res: Response<PutProjectSettingsResponse | ApiErrorResponse>,
 ) => {
   const { id } = req.params;
-  req.checkPermissions("manageProjects", id);
 
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
 
-  const project = await findProjectById(id, org.id);
+  if (!context.permissions.canUpdateProject(id)) {
+    context.permissions.throwPermissionError();
+  }
+
+  const project = await context.models.projects.getById(id);
 
   if (!project) {
     res.status(404).json({
@@ -189,7 +346,7 @@ export const putProjectSettings = async (
 
   const { settings } = req.body;
 
-  await updateProjectSettings(id, project.organization, settings);
+  await context.models.projects.update(project, { settings });
 
   res.status(200).json({
     status: 200,

@@ -1,21 +1,33 @@
 import { useMemo } from "react";
-import { useUser } from "../services/UserContext";
+import { useUser } from "@/services/UserContext";
 
 export default function useMembers() {
   const { users } = useUser();
 
   const memberUsernameOptions = useMemo(() => {
-    const memberUsernameOptions = [];
+    const memberUsernameOptions: { display: string; value: string }[] = [];
     users.forEach((user) => {
       memberUsernameOptions.push({
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string' is not assignable to type 'never'.
         display: user.name ? user.name : user.email,
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string' is not assignable to type 'never'.
         value: user.name ? user.name : user.email,
       });
     });
     return memberUsernameOptions;
   }, [users]);
 
-  return { memberUsernameOptions };
+  const memberUserNameAndIdOptions = useMemo(() => {
+    const memberUsernameWithIdOptions: {
+      display: string;
+      value: string;
+    }[] = [];
+    users.forEach((user) => {
+      memberUsernameWithIdOptions.push({
+        display: user.name ? user.name : user.email,
+        value: user.id,
+      });
+    });
+    return memberUsernameWithIdOptions;
+  }, [users]);
+
+  return { memberUsernameOptions, memberUserNameAndIdOptions };
 }

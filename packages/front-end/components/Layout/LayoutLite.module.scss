@@ -1,22 +1,21 @@
+@use "../../styles/variables";
 @import "../../styles/colors.scss";
-$sidebarwidth: 240px;
-$expandedwidth: 280px;
 
 .sidebar {
   background-color: $dark-purple;
-  width: $sidebarwidth;
+  width: variables.$sidebarwidth;
   flex-direction: column;
   display: flex;
   height: 100%;
   transition: all 0.5s cubic-bezier(0.685, 0.0473, 0.346, 1);
   position: fixed;
   color: #fff;
-  z-index: 900;
+  z-index: 1000;
   overflow: auto;
 }
 .sidebarlogo {
   padding: 8px 20px 8px;
-  width: $sidebarwidth;
+  width: variables.$sidebarwidth;
   height: 60px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.5);
 }
@@ -31,7 +30,7 @@ $expandedwidth: 280px;
 
 @media (max-width: 1180px) {
   .sidebar {
-    width: $expandedwidth;
-    left: -$expandedwidth;
+    width: variables.$expandedwidth;
+    left: -(variables.$expandedwidth);
   }
 }

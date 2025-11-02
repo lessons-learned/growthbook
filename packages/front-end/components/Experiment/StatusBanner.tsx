@@ -1,8 +1,8 @@
 import clsx from "clsx";
 import { FaPencilAlt } from "react-icons/fa";
 import { useAuth } from "@/services/auth";
-import Button from "../Button";
-import Markdown from "../Markdown/Markdown";
+import Button from "@/components/Button";
+import Markdown from "@/components/Markdown/Markdown";
 import { useSnapshot } from "./SnapshotProvider";
 
 export interface Props {
@@ -21,8 +21,8 @@ export default function StatusBanner({ mutateExperiment, editResult }: Props) {
       (result === "lost"
         ? experiment.variations[0]?.name
         : result === "won"
-        ? experiment.variations[experiment.winner || 1]?.name
-        : "") || "";
+          ? experiment.variations[experiment.winner || 1]?.name
+          : "") || "";
 
     const releasedVariation =
       experiment.variations.find((v) => v.id === experiment.releasedVariationId)
@@ -51,7 +51,8 @@ export default function StatusBanner({ mutateExperiment, editResult }: Props) {
           </div>
           {releasedVariation && (
             <div className="px-3">
-              {winningVariation !== releasedVariation && (
+              {(result === "won" || result === "lost") &&
+              winningVariation !== releasedVariation ? (
                 <>
                   <strong>
                     &quot;
@@ -60,7 +61,7 @@ export default function StatusBanner({ mutateExperiment, editResult }: Props) {
                   </strong>{" "}
                   won, but{" "}
                 </>
-              )}
+              ) : null}
               <strong>
                 &quot;
                 {releasedVariation}
@@ -107,7 +108,8 @@ export default function StatusBanner({ mutateExperiment, editResult }: Props) {
               editResult();
             }}
           >
-            Stop Experiment
+            Stop{" "}
+            {experiment.type === "multi-armed-bandit" ? "Bandit" : "Experiment"}
           </a>
         )}
         <strong>This experiment is currently running.</strong>

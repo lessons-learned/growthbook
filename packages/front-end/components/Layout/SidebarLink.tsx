@@ -1,14 +1,20 @@
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { IconType } from "react-icons/lib";
 import { useRouter } from "next/router";
 import clsx from "clsx";
 import { FiChevronRight } from "react-icons/fi";
-import { AccountPlan, Permission } from "back-end/types/organization";
-import { useGrowthBook } from "@growthbook/growthbook-react";
+import { GrowthBook, useGrowthBook } from "@growthbook/growthbook-react";
+import { GlobalPermission } from "back-end/types/organization";
+import { Permissions } from "shared/permissions";
+import { SegmentInterface } from "back-end/types/segment";
+import { SavedQuery } from "back-end/src/validators/saved-queries";
 import { AppFeatures } from "@/types/app-features";
-import { isCloud } from "../../services/env";
-import { useUser } from "../../services/UserContext";
+import { isCloud, isMultiOrg } from "@/services/env";
+import { PermissionFunctions, useUser } from "@/services/UserContext";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import { useDefinitions } from "@/services/DefinitionsContext";
+import useApi from "@/hooks/useApi";
 import styles from "./SidebarLink.module.scss";
 
 export type SidebarLinkProps = {
@@ -20,19 +26,35 @@ export type SidebarLinkProps = {
   divider?: boolean;
   sectionTitle?: string;
   className?: string;
-  superAdmin?: boolean;
-  cloudOnly?: boolean;
-  selfHostedOnly?: boolean;
   autoClose?: boolean;
-  permissions?: Permission[];
+  navigateOnExpand?: boolean;
+  filter?: (props: {
+    permissionsUtils: Permissions;
+    segments: SegmentInterface[];
+    permissions: Record<GlobalPermission, boolean> & PermissionFunctions;
+    superAdmin: boolean;
+    isCloud: boolean;
+    isMultiOrg: boolean;
+    gb?: GrowthBook<AppFeatures>;
+    project?: string;
+    savedQueries: SavedQuery[];
+  }) => boolean;
   subLinks?: SidebarLinkProps[];
   beta?: boolean;
-  feature?: keyof AppFeatures;
-  accountPlans?: AccountPlan[];
 };
 
 const SidebarLink: FC<SidebarLinkProps> = (props) => {
-  const { permissions, admin, accountPlan } = useUser();
+  const { permissions, superAdmin } = useUser();
+  const { project, segments } = useDefinitions();
+  const { data: savedQueryData } = useApi<{
+    status: number;
+    savedQueries: SavedQuery[];
+  }>("/saved-queries");
+  const savedQueries = useMemo(
+    () => savedQueryData?.savedQueries ?? [],
+    [savedQueryData],
+  );
+
   const router = useRouter();
 
   const path = router.route.substr(1);
@@ -40,6 +62,7 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
   const showSubMenuIcons = true;
 
   const growthbook = useGrowthBook<AppFeatures>();
+  const permissionsUtils = usePermissionsUtil();
 
   const [open, setOpen] = useState(selected);
 
@@ -50,26 +73,27 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
     }
   }, [selected]);
 
-  // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-  if (props.feature && !growthbook.isOn(props.feature)) {
+  const filterProps = {
+    permissionsUtils,
+    permissions,
+    superAdmin: !!superAdmin,
+    isCloud: isCloud(),
+    isMultiOrg: isMultiOrg(),
+    gb: growthbook,
+    project,
+    segments,
+    savedQueries,
+  };
+
+  if (props.filter && !props.filter(filterProps)) {
     return null;
   }
 
-  if (props.superAdmin && !admin) return null;
-  if (props.permissions) {
-    let allowed = false;
-    for (let i = 0; i < props.permissions.length; i++) {
-      if (permissions[props.permissions[i]]) {
-        allowed = true;
-      }
-    }
-    if (!allowed) return null;
-  }
+  const permittedSubLinks = (props.subLinks || []).filter(
+    (l) => !l.filter || l.filter(filterProps),
+  );
 
-  if (props.cloudOnly && !isCloud()) {
-    return null;
-  }
-  if (props.selfHostedOnly && isCloud()) {
+  if (props.subLinks && !permittedSubLinks.length) {
     return null;
   }
 
@@ -99,8 +123,18 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
           })}
           href={props.href}
           onClick={(e) => {
+            // Allow browser default behavior for modifier keys (cmd/ctrl/shift) or middle mouse button
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
+              return;
+            }
+
             e.preventDefault();
             if (props.subLinks) {
+              // If it's currently closed and it's set to navigate on expand
+              if (!open && !selected && props.navigateOnExpand && props.href) {
+                router.push(props.href);
+              }
+
               setOpen(!open);
               e.stopPropagation();
             } else {
@@ -115,7 +149,14 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
             </span>
           )}
           {props.name}
-          {props.beta && <div className="badge badge-warning ml-2">beta</div>}
+          {props.beta && (
+            <div
+              className="badge border text-uppercase ml-2"
+              style={{ opacity: 0.65 }}
+            >
+              beta
+            </div>
+          )}
           {props.subLinks && (
             <div className={clsx("float-right", styles.chevron)}>
               <FiChevronRight />
@@ -123,75 +164,51 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
           )}
         </a>
       </li>
-      {props.subLinks && (
+      {permittedSubLinks.length > 0 ? (
         <ul
           className={clsx(styles.sublinks, {
             [styles.open]: open || selected,
           })}
         >
-          {props.subLinks
-            .filter(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-              (subLink) => !subLink.feature || growthbook.isOn(subLink.feature)
-            )
-            .map((l) => {
-              if (l.superAdmin && !admin) return null;
+          {permittedSubLinks.map((l) => {
+            const sublinkSelected = l.path.test(path);
 
-              if (l.permissions) {
-                for (let i = 0; i < l.permissions.length; i++) {
-                  if (!permissions[l.permissions[i]]) {
-                    return null;
-                  }
-                }
-              }
-              if (l.cloudOnly && !isCloud()) {
-                return null;
-              }
-              if (l.selfHostedOnly && isCloud()) {
-                return null;
-              }
-              // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'AccountPlan | undefined' is not ... Remove this comment to see the full error message
-              if (l.accountPlans && !l.accountPlans.includes(accountPlan)) {
-                return null;
-              }
-
-              const sublinkSelected = l.path.test(path);
-
-              return (
-                <li
-                  key={l.href}
-                  className={clsx(
-                    "sidebarlink sublink",
-                    styles.link,
-                    styles.sublink,
-                    {
-                      [styles.subdivider]: l.divider,
-                      [styles.selected]: sublinkSelected,
-                      selected: sublinkSelected,
-                      [styles.collapsed]: !open && !sublinkSelected,
-                    }
-                  )}
-                >
-                  <Link href={l.href}>
-                    <a className="align-middle">
-                      {showSubMenuIcons && (
-                        <>
-                          {l.Icon && <l.Icon className={styles.icon} />}
-                          {l.icon && (
-                            <span>
-                              <img src={`/icons/${l.icon}`} />
-                            </span>
-                          )}
-                        </>
+            return (
+              <li
+                key={l.href}
+                className={clsx(
+                  "sidebarlink sublink",
+                  styles.link,
+                  styles.sublink,
+                  {
+                    [styles.subdivider]: l.divider,
+                    [styles.selected]: sublinkSelected,
+                    selected: sublinkSelected,
+                    [styles.collapsed]: !open && !sublinkSelected,
+                  },
+                )}
+              >
+                <Link href={l.href} className="align-middle">
+                  {showSubMenuIcons && (
+                    <>
+                      {l.Icon && <l.Icon className={styles.icon} />}
+                      {l.icon && (
+                        <span>
+                          <img src={`/icons/${l.icon}`} />
+                        </span>
                       )}
-                      {l.name}
-                    </a>
-                  </Link>
-                </li>
-              );
-            })}
+                    </>
+                  )}
+                  {l.name}
+                  {l.beta && (
+                    <div className="badge badge-purple ml-2">beta</div>
+                  )}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
-      )}
+      ) : null}
     </>
   );
 };

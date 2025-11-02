@@ -15,15 +15,13 @@ module.exports = function (plop) {
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/routers/{{kebabCase resource}}/{{kebabCase resource}}.router.ts",
+        path: "./packages/back-end/src/routers/{{kebabCase resource}}/{{kebabCase resource}}.router.ts",
         templateFile: "./plop-templates/back-end/router.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/routers/{{kebabCase resource}}/{{kebabCase resource}}.controller.ts",
+        path: "./packages/back-end/src/routers/{{kebabCase resource}}/{{kebabCase resource}}.controller.ts",
         templateFile: "./plop-templates/back-end/controller.hbs",
       },
     ],
@@ -34,7 +32,7 @@ module.exports = function (plop) {
   // region Front-end
 
   plop.setGenerator("component", {
-    description: "[front-end] Generates a component and a Storybook story",
+    description: "[front-end] Generates a component",
     prompts: [
       {
         type: "input",
@@ -46,16 +44,8 @@ module.exports = function (plop) {
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/front-end/components/{{pascalCase component}}/{{pascalCase component}}.tsx",
+        path: "./packages/front-end/components/{{pascalCase component}}/{{pascalCase component}}.tsx",
         templateFile: "./plop-templates/front-end/component.hbs",
-      },
-      {
-        type: "add",
-        skipIfExists: true,
-        path:
-          "./packages/front-end/components/{{pascalCase component}}/{{pascalCase component}}.stories.tsx",
-        templateFile: "./plop-templates/front-end/component-story.hbs",
       },
     ],
   });
@@ -74,85 +64,73 @@ module.exports = function (plop) {
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/{{kebabCase object}}s.router.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/{{kebabCase object}}s.router.ts",
         templateFile: "./plop-templates/back-end/api/router.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/list{{pascalCase object}}s.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/list{{pascalCase object}}s.ts",
         templateFile: "./plop-templates/back-end/api/list.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/get{{pascalCase object}}.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/get{{pascalCase object}}.ts",
         templateFile: "./plop-templates/back-end/api/get.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/post{{pascalCase object}}.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/post{{pascalCase object}}.ts",
         templateFile: "./plop-templates/back-end/api/post.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/update{{pascalCase object}}.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/update{{pascalCase object}}.ts",
         templateFile: "./plop-templates/back-end/api/update.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/{{kebabCase object}}s/delete{{pascalCase object}}.ts",
+        path: "./packages/back-end/src/api/{{kebabCase object}}s/delete{{pascalCase object}}.ts",
         templateFile: "./plop-templates/back-end/api/delete.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/schemas/{{pascalCase object}}.yaml",
+        path: "./packages/back-end/src/api/openapi/schemas/{{pascalCase object}}.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_model.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/paths/list{{pascalCase object}}s.yaml",
+        path: "./packages/back-end/src/api/openapi/paths/list{{pascalCase object}}s.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_list.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/paths/post{{pascalCase object}}.yaml",
+        path: "./packages/back-end/src/api/openapi/paths/post{{pascalCase object}}.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_post.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/paths/update{{pascalCase object}}.yaml",
+        path: "./packages/back-end/src/api/openapi/paths/update{{pascalCase object}}.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_update.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/paths/get{{pascalCase object}}.yaml",
+        path: "./packages/back-end/src/api/openapi/paths/get{{pascalCase object}}.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_get.hbs",
       },
       {
         type: "add",
         skipIfExists: true,
-        path:
-          "./packages/back-end/src/api/openapi/paths/delete{{pascalCase object}}.yaml",
+        path: "./packages/back-end/src/api/openapi/paths/delete{{pascalCase object}}.yaml",
         templateFile: "./plop-templates/back-end/api/openapi_delete.hbs",
       },
       {
@@ -210,4 +188,64 @@ module.exports = function (plop) {
   });
 
   // endregion Front-end
+
+  // region Shared
+
+  plop.setGenerator("shared-entrypoint", {
+    description: "[shared] Generates a new entry point for the shared package",
+    prompts: [
+      {
+        type: "input",
+        name: "entrypoint",
+        message:
+          "A new entry point for the shared package, e.g. 'todos' to make import { createTodo } from 'shared/todos'",
+      },
+      {
+        type: "input",
+        name: "function",
+        message:
+          "Name of the first function to add to this file, e.g. 'createTodo' to make import { createTodo } from 'shared/todos'",
+      },
+    ],
+    actions: [
+      // definition file
+      {
+        type: "add",
+        skipIfExists: true,
+        path: "./packages/shared/{{kebabCase entrypoint}}.d.ts",
+        template: `export * from "./src/{{kebabCase entrypoint}}";`.trim(),
+      },
+      // utils
+      {
+        type: "add",
+        skipIfExists: true,
+        path: "./packages/shared/src/{{kebabCase entrypoint}}/{{kebabCase entrypoint}}.ts",
+        template: `export function {{function}}(): void {
+  // todo
+}`.trim(),
+      },
+      // exports & barrel files
+      {
+        type: "add",
+        skipIfExists: true,
+        path: "./packages/shared/{{kebabCase entrypoint}}.js",
+        template:
+          `module.exports = require("./dist/{{kebabCase entrypoint}}");`.trim(),
+      },
+      {
+        type: "add",
+        skipIfExists: true,
+        path: "./packages/shared/src/{{kebabCase entrypoint}}/index.ts",
+        template: `export * from "./{{kebabCase entrypoint}}";`.trim(),
+      },
+      {
+        type: "append",
+        path: "./packages/shared/src/index.ts",
+        template:
+          `export * as {{camelCase entrypoint}} from "./{{kebabCase entrypoint}}";`.trim(),
+      },
+    ],
+  });
+
+  // endregion Shared
 };

@@ -1,9 +1,12 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
-import { getUserByEmail } from "../services/users";
-import { APP_ORIGIN } from "../util/secrets";
-import { isEmailEnabled, sendResetPasswordEmail } from "../services/email";
-import { logger } from "../util/logger";
+import { getUserByEmail } from "back-end/src/models/UserModel";
+import { APP_ORIGIN } from "back-end/src/util/secrets";
+import {
+  isEmailEnabled,
+  sendResetPasswordEmail,
+} from "back-end/src/services/email";
+import { logger } from "back-end/src/util/logger";
 
 export interface ForgotPasswordInterface {
   token: string;
@@ -27,16 +30,19 @@ const forgotPasswordSchema = new mongoose.Schema({
 export type ForgotPasswordDocument = mongoose.Document &
   ForgotPasswordInterface;
 
-export const ForgotPasswordModel = mongoose.model<ForgotPasswordDocument>(
+export const ForgotPasswordModel = mongoose.model<ForgotPasswordInterface>(
   "ForgotPassword",
-  forgotPasswordSchema
+  forgotPasswordSchema,
 );
 
 export async function createForgotPasswordToken(email: string): Promise<void> {
   const user = await getUserByEmail(email);
-  if (!user) {
+  if (!user || !user.id) {
     throw new Error("Could not find a user with that email address");
   }
+
+  // Delete any existing reset password links
+  await ForgotPasswordModel.deleteMany({ userId: user.id });
 
   const token = crypto.randomBytes(32).toString("hex");
   const doc: ForgotPasswordInterface = {
@@ -51,7 +57,7 @@ export async function createForgotPasswordToken(email: string): Promise<void> {
   try {
     if (!isEmailEnabled()) {
       throw new Error(
-        "Email server not configured. Check server logs for reset link."
+        "Email server not configured. Check server logs for reset link.",
       );
     }
 
@@ -63,13 +69,21 @@ export async function createForgotPasswordToken(email: string): Promise<void> {
 }
 
 export async function getUserIdFromForgotPasswordToken(
-  token: string
+  token: string,
 ): Promise<string> {
   const doc = await ForgotPasswordModel.findOne({
     token,
   });
 
-  return doc?.userId || "";
+  if (!doc) return "";
+
+  const lastValidDate = new Date();
+  lastValidDate.setMinutes(lastValidDate.getMinutes() - 30);
+  if (doc.createdAt < lastValidDate) {
+    throw new Error("That password reset link has expired.");
+  }
+
+  return doc.userId;
 }
 
 export async function deleteForgotPasswordToken(token: string) {

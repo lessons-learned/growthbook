@@ -1,14 +1,17 @@
-import { ApiExperiment, ApiFeature } from "../../types/openapi";
-import { NotificationEventPayload } from "./base-types";
-import { UserLoginAuditableProperties } from "./event-types";
+import { ApiExperiment, ApiFeature } from "back-end/types/openapi";
+import { ExperimentWarningNotificationPayload } from "back-end/src/validators/experiment-warnings";
+import { LegacyNotificationEventPayload } from "./base-types";
+import { UserLoginEventProperties } from "./event-types";
+
+export { NotificationEvent } from "./base-types";
 
 // region User
 
-export type UserLoginNotificationEvent = NotificationEventPayload<
-  "user.login",
+export type LegacyUserLoginNotificationEvent = LegacyNotificationEventPayload<
   "user",
+  "user.login",
   {
-    current: UserLoginAuditableProperties;
+    current: UserLoginEventProperties;
   }
 >;
 
@@ -16,58 +19,77 @@ export type UserLoginNotificationEvent = NotificationEventPayload<
 
 // region Feature
 
-export type FeatureCreatedNotificationEvent = NotificationEventPayload<
-  "feature.created",
-  "feature",
-  {
-    current: ApiFeature;
-  }
->;
+export type LegacyFeatureCreatedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "feature",
+    "feature.created",
+    {
+      current: ApiFeature;
+    }
+  >;
 
-export type FeatureUpdatedNotificationEvent = NotificationEventPayload<
-  "feature.updated",
-  "feature",
-  {
-    current: ApiFeature;
-    previous: ApiFeature;
-  }
->;
+export type LegacyFeatureUpdatedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "feature",
+    "feature.updated",
+    {
+      current: ApiFeature;
+      previous: ApiFeature;
+    }
+  >;
 
-export type FeatureDeletedNotificationEvent = NotificationEventPayload<
-  "feature.deleted",
-  "feature",
-  {
-    previous: ApiFeature;
-  }
->;
+export type LegacyFeatureDeletedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "feature",
+    "feature.deleted",
+    {
+      previous: ApiFeature;
+    }
+  >;
 
 // endregion Feature
 
 // region Experiment
 
-export type ExperimentCreatedNotificationEvent = NotificationEventPayload<
-  "experiment.created",
-  "experiment",
-  {
-    current: ApiExperiment;
-  }
->;
+export type LegacyExperimentCreatedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "experiment",
+    "experiment.created",
+    {
+      current: ApiExperiment;
+    }
+  >;
 
-export type ExperimentUpdatedNotificationEvent = NotificationEventPayload<
-  "experiment.updated",
-  "experiment",
-  {
-    current: ApiExperiment;
-    previous: ApiExperiment;
-  }
->;
+export type LegacyExperimentUpdatedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "experiment",
+    "experiment.updated",
+    {
+      current: ApiExperiment;
+      previous: ApiExperiment;
+    }
+  >;
 
-export type ExperimentDeletedNotificationEvent = NotificationEventPayload<
-  "experiment.deleted",
-  "experiment",
-  {
-    previous: ApiExperiment;
-  }
+export type LegacyExperimentDeletedNotificationEvent =
+  LegacyNotificationEventPayload<
+    "experiment",
+    "experiment.deleted",
+    {
+      previous: ApiExperiment;
+    }
+  >;
+
+export type LegacyExperimentWarningNotificationEvent =
+  LegacyNotificationEventPayload<
+    "experiment",
+    "experiment.warning",
+    ExperimentWarningNotificationPayload
+  >;
+
+export type LegacyWebhookTestEvent = LegacyNotificationEventPayload<
+  "webhook",
+  "webhook.test",
+  { webhookId: string }
 >;
 
 // endregion Experiment
@@ -75,11 +97,13 @@ export type ExperimentDeletedNotificationEvent = NotificationEventPayload<
 /**
  * All supported event types in the database
  */
-export type NotificationEvent =
-  | UserLoginNotificationEvent
-  | FeatureCreatedNotificationEvent
-  | FeatureUpdatedNotificationEvent
-  | FeatureDeletedNotificationEvent
-  | ExperimentCreatedNotificationEvent
-  | ExperimentUpdatedNotificationEvent
-  | ExperimentDeletedNotificationEvent;
+export type LegacyNotificationEvent =
+  | LegacyUserLoginNotificationEvent
+  | LegacyFeatureCreatedNotificationEvent
+  | LegacyFeatureUpdatedNotificationEvent
+  | LegacyFeatureDeletedNotificationEvent
+  | LegacyExperimentCreatedNotificationEvent
+  | LegacyExperimentUpdatedNotificationEvent
+  | LegacyExperimentDeletedNotificationEvent
+  | LegacyExperimentWarningNotificationEvent
+  | LegacyWebhookTestEvent;

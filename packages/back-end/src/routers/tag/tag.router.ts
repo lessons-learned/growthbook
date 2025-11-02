@@ -1,7 +1,7 @@
 import express from "express";
 import z from "zod";
-import { wrapController } from "../wrapController";
-import { validateRequestMiddleware } from "../utils/validateRequestMiddleware";
+import { wrapController } from "back-end/src/routers/wrapController";
+import { validateRequestMiddleware } from "back-end/src/routers/utils/validateRequestMiddleware";
 import * as rawTagController from "./tag.controller";
 
 const router = express.Router();
@@ -19,19 +19,19 @@ router.post(
       })
       .strict(),
   }),
-  tagController.postTag
+  tagController.postTag,
 );
 
 router.delete(
-  "/:id",
+  "/",
   validateRequestMiddleware({
-    params: z
+    body: z
       .object({
         id: z.string(),
       })
       .strict(),
   }),
-  tagController.deleteTag
+  tagController.deleteTag,
 );
 
 export { router as tagRouter };

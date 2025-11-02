@@ -1,20 +1,18 @@
 import { Response } from "express";
-import { AuthRequest } from "../types/AuthRequest";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
 import {
   getPresentationById,
   getPresentationsByOrganization,
   createPresentation,
   deletePresentationById,
-} from "../services/presentations";
-import { getOrgFromReq, userHasAccess } from "../services/organizations";
-import { ExperimentInterface } from "../../types/experiment";
-import { ExperimentSnapshotInterface } from "../../types/experiment-snapshot";
-import { PresentationInterface } from "../../types/presentation";
-import { getExperimentsByIds } from "../models/ExperimentModel";
-import { getLatestSnapshot } from "../models/ExperimentSnapshotModel";
+  getPresentationSnapshots,
+} from "back-end/src/services/presentations";
+import { getContextFromReq } from "back-end/src/services/organizations";
+import { ExperimentInterface } from "back-end/types/experiment";
+import { PresentationInterface } from "back-end/types/presentation";
 
 export async function getPresentations(req: AuthRequest, res: Response) {
-  const { org } = getOrgFromReq(req);
+  const { org } = getContextFromReq(req);
   const presentations = await getPresentationsByOrganization(org.id);
 
   res.status(200).json({
@@ -25,25 +23,17 @@ export async function getPresentations(req: AuthRequest, res: Response) {
 
 export async function getPresentation(
   req: AuthRequest<null, { id: string }>,
-  res: Response
+  res: Response,
 ) {
   const { id } = req.params;
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
 
   const pres = await getPresentationById(id);
 
-  if (!pres) {
-    res.status(403).json({
+  if (!pres || pres.organization !== context.org.id) {
+    res.status(404).json({
       status: 404,
       message: "Presentation not found",
-    });
-    return;
-  }
-
-  if (!(await userHasAccess(req, pres.organization))) {
-    res.status(403).json({
-      status: 403,
-      message: "You do not have access to this presentation",
     });
     return;
   }
@@ -56,24 +46,7 @@ export async function getPresentation(
       .map((o) => o.id);
   }
 
-  const experiments = await getExperimentsByIds(org.id, expIds);
-
-  const withSnapshots: {
-    experiment: ExperimentInterface;
-    snapshot: ExperimentSnapshotInterface;
-  }[] = [];
-  const promises = experiments.map(async (experiment, i) => {
-    const phase = experiment.phases.length - 1;
-    const snapshot = await getLatestSnapshot(experiment.id, phase);
-    if (!snapshot) return;
-    withSnapshots[i] = {
-      experiment,
-      snapshot,
-    };
-  });
-  await Promise.all(promises);
-
-  // get the learnigns associated with these experiments:
+  const withSnapshots = await getPresentationSnapshots(context, expIds);
 
   res.status(200).json({
     status: 200,
@@ -84,7 +57,7 @@ export async function getPresentation(
 
 export async function getPresentationPreview(req: AuthRequest, res: Response) {
   const { expIds } = req.query as { expIds: string };
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
 
   if (!expIds) {
     res.status(403).json({
@@ -95,30 +68,7 @@ export async function getPresentationPreview(req: AuthRequest, res: Response) {
   }
   const expIdsArr = expIds.split(",");
 
-  const experiments = await getExperimentsByIds(org.id, expIdsArr);
-  // getExperimentsByIds returns experiments in any order, we want to put it
-  // back into the order that was requested in the API call.
-  const sortedExps = expIdsArr.map((id) => {
-    return experiments.filter((o) => o.id === id)[0];
-  });
-  const withSnapshots: {
-    experiment: ExperimentInterface;
-    snapshot: ExperimentSnapshotInterface;
-  }[] = [];
-  const promises = sortedExps.map(async (experiment, i) => {
-    // only show experiments that you have permission to view
-    if (await userHasAccess(req, experiment.organization)) {
-      // get best phase to show:
-      const phase = experiment.phases.length - 1;
-      const snapshot = await getLatestSnapshot(experiment.id, phase);
-      if (!snapshot) return;
-      withSnapshots[i] = {
-        experiment,
-        snapshot,
-      };
-    }
-  });
-  await Promise.all(promises);
+  const withSnapshots = await getPresentationSnapshots(context, expIdsArr);
 
   res.status(200).json({
     status: 200,
@@ -128,12 +78,15 @@ export async function getPresentationPreview(req: AuthRequest, res: Response) {
 
 export async function deletePresentation(
   req: AuthRequest<ExperimentInterface, { id: string }>,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("createPresentations");
-
   const { id } = req.params;
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
+
+  if (!context.permissions.canDeletePresentation()) {
+    context.permissions.throwPermissionError();
+  }
 
   const p = await getPresentationById(id);
 
@@ -170,12 +123,16 @@ export async function deletePresentation(
  */
 export async function postPresentation(
   req: AuthRequest<Partial<PresentationInterface>>,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("createPresentations");
-
   const data = req.body;
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
+
+  if (!context.permissions.canCreatePresentation()) {
+    context.permissions.throwPermissionError();
+  }
+
   data.organization = org.id;
 
   data.userId = req.userId;
@@ -194,13 +151,16 @@ export async function postPresentation(
  */
 export async function updatePresentation(
   req: AuthRequest<PresentationInterface, { id: string }>,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("createPresentations");
-
   const { id } = req.params;
   const data = req.body;
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org } = context;
+
+  if (!context.permissions.canUpdatePresentation()) {
+    context.permissions.throwPermissionError();
+  }
 
   const p = await getPresentationById(id);
 

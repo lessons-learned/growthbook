@@ -5,12 +5,12 @@ import { IdeaInterface } from "back-end/types/idea";
 import { ImpactEstimateInterface } from "back-end/types/impact-estimate";
 import { useAuth } from "@/services/auth";
 import { useDefinitions } from "@/services/DefinitionsContext";
-import Modal from "../Modal";
-import Field from "../Forms/Field";
-import SelectField from "../Forms/SelectField";
+import Modal from "@/components/Modal";
+import Field from "@/components/Forms/Field";
+import SelectField from "@/components/Forms/SelectField";
 
 const ImpactModal: FC<{
-  idea?: IdeaInterface;
+  idea: IdeaInterface;
   estimate?: ImpactEstimateInterface;
   close: () => void;
   mutate: () => void;
@@ -23,18 +23,15 @@ const ImpactModal: FC<{
     defaultValues: {
       metric: estimate?.metric || metrics[0]?.id || "",
       segment: estimate?.segment || "",
-      // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
       userAdjustment: idea.estimateParams?.userAdjustment || 100,
-      // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
       numVariations: idea.estimateParams?.numVariations || 2,
-      // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
       improvement: idea.estimateParams?.improvement || 10,
     },
   });
 
   const possibleMetrics = metrics.filter(
     // TODO: support non-binomial and manual metrics
-    (m) => m.type === "binomial" && m.datasource
+    (m) => m.type === "binomial" && m.datasource,
   );
 
   const metric = getMetricById(form.watch("metric"));
@@ -44,6 +41,7 @@ const ImpactModal: FC<{
 
   return (
     <Modal
+      trackingEventModalType=""
       header="Impact Score Parameters"
       open={true}
       submit={form.handleSubmit(async (value) => {
@@ -61,15 +59,16 @@ const ImpactModal: FC<{
               body: JSON.stringify({
                 metric: value.metric,
                 segment: value.segment || null,
+                ideaId: idea.id || null,
               }),
-            }
+            },
           );
           est = res.estimate;
         }
 
         if (!est) {
           throw new Error(
-            "Failed to get user and page data from the data source"
+            "Failed to get user and page data from the data source",
           );
         }
 
@@ -93,13 +92,13 @@ const ImpactModal: FC<{
           experimentLength,
           estimateParams: {
             estimate: est.id,
+            segment: est?.segment || "",
             improvement: value.improvement,
             numVariations: value.numVariations,
             userAdjustment: value.userAdjustment,
           },
         };
 
-        // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
         await apiCall(`/idea/${idea.id}`, {
           method: "POST",
           body: JSON.stringify(data),
@@ -167,10 +166,7 @@ const ImpactModal: FC<{
           !possibleSegments?.length ? (
             <>
               No segments defined for the selected metric&apos;s datasource.{" "}
-              <Link href="/segments">
-                <a>Add Segments</a>
-              </Link>
-              .
+              <Link href="/segments">Add Segments</Link>.
             </>
           ) : null
         }

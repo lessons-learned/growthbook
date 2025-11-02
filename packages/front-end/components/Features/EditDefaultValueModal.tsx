@@ -1,23 +1,25 @@
 import { useForm } from "react-hook-form";
 import { FeatureInterface } from "back-end/types/feature";
+import { validateFeatureValue } from "shared/util";
 import { useAuth } from "@/services/auth";
-import {
-  getFeatureDefaultValue,
-  validateFeatureValue,
-} from "@/services/features";
-import Modal from "../Modal";
+import { getFeatureDefaultValue } from "@/services/features";
+import Modal from "@/components/Modal";
 import FeatureValueField from "./FeatureValueField";
 
 export interface Props {
   feature: FeatureInterface;
+  version: number;
   close: () => void;
   mutate: () => void;
+  setVersion: (version: number) => void;
 }
 
 export default function EditDefaultValueModal({
   feature,
+  version,
   close,
   mutate,
+  setVersion,
 }: Props) {
   const form = useForm({
     defaultValues: {
@@ -28,29 +30,34 @@ export default function EditDefaultValueModal({
 
   return (
     <Modal
+      trackingEventModalType=""
       header="Edit Default Value"
       submit={form.handleSubmit(async (value) => {
         const newDefaultValue = validateFeatureValue(
-          feature.valueType,
-          // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
-          value.defaultValue,
-          ""
+          feature,
+          value?.defaultValue ?? "",
+          "",
         );
         if (newDefaultValue !== value.defaultValue) {
           form.setValue("defaultValue", newDefaultValue);
           throw new Error(
-            "We fixed some errors in the value. If it looks correct, submit again."
+            "We fixed some errors in the value. If it looks correct, submit again.",
           );
         }
 
-        await apiCall(`/feature/${feature.id}/defaultvalue`, {
-          method: "POST",
-          body: JSON.stringify(value),
-        });
-        mutate();
+        const res = await apiCall<{ version: number }>(
+          `/feature/${feature.id}/${version}/defaultvalue`,
+          {
+            method: "POST",
+            body: JSON.stringify(value),
+          },
+        );
+        await mutate();
+        res.version && setVersion(res.version);
       })}
       close={close}
       open={true}
+      size={feature.valueType === "json" ? "lg" : "md"}
     >
       <div className="alert alert-info">
         Changes here will be added to a draft revision. You will have a chance
@@ -59,10 +66,11 @@ export default function EditDefaultValueModal({
       <FeatureValueField
         label="Value When Enabled"
         id="defaultValue"
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
         value={form.watch("defaultValue")}
         setValue={(v) => form.setValue("defaultValue", v)}
         valueType={feature.valueType}
+        feature={feature}
+        renderJSONInline={true}
       />
     </Modal>
   );

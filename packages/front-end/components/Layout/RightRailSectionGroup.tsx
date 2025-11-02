@@ -1,5 +1,5 @@
 import React, { Children, CSSProperties, FC, ReactNode } from "react";
-import SortedTags from "../Tags/SortedTags";
+import SortedTags from "@/components/Tags/SortedTags";
 
 const RightRailSectionGroup: FC<{
   title?: string | ReactNode;
@@ -45,7 +45,7 @@ const RightRailSectionGroup: FC<{
             <SortedTags
               // @ts-expect-error TS(2533) If you come across this, please fix it!: Object is possibly 'null' or 'undefined'.
               tags={Children.map(children, (child) => child + "").filter(
-                Boolean
+                Boolean,
               )}
             />
           )}

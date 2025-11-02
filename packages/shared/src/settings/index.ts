@@ -12,6 +12,9 @@ import {
   ScopedSettingsReturn,
 } from "./types";
 import regressionAdjustmentResolver from "./resolvers/regressionAdjustmentEnabledResolver";
+import metricTargetMDEResolver from "./resolvers/metricTargetMDEResolver";
+export * from "./types";
+export { DEFAULT_MAX_METRIC_SLICE_LEVELS } from "../../constants";
 
 export const resolvers: Record<
   keyof Settings,
@@ -50,36 +53,76 @@ export const resolvers: Record<
       project: "settings.multipleExposureMinPercent",
       experiment: true,
       report: true,
-    }
+    },
   ),
   defaultRole: genDefaultResolver("defaultRole"),
-  statsEngine: genDefaultResolver("statsEngine", {
-    project: "settings.statsEngine",
-    // experiment: true,
-    report: true,
-  }),
+  statsEngine: genDefaultResolver(
+    "statsEngine",
+    {
+      project: "settings.statsEngine",
+      experiment: true,
+      report: true,
+    },
+    {
+      bypassEmpty: true,
+    },
+  ),
   pValueThreshold: genDefaultResolver("pValueThreshold", {
     project: "settings.pValueThreshold",
     experiment: true,
     metric: true,
     report: true,
   }),
+  pValueCorrection: genDefaultResolver("pValueCorrection", {
+    project: "settings.pValueCorrection",
+    experiment: true,
+    metric: true,
+    report: true,
+  }),
   regressionAdjustmentEnabled: regressionAdjustmentResolver("enabled"),
   regressionAdjustmentDays: regressionAdjustmentResolver("days"),
+  sequentialTestingEnabled: genDefaultResolver("sequentialTestingEnabled", {
+    experiment: true,
+    report: true,
+  }),
+  sequentialTestingTuningParameter: genDefaultResolver(
+    "sequentialTestingTuningParameter",
+    {
+      experiment: true,
+      report: true,
+    },
+  ),
   attributionModel: genDefaultResolver("attributionModel", {
     project: "settings.attributionModel",
     experiment: true,
     report: true,
   }),
-  conversionDelayHours: genMetricOverrideResolver("conversionDelayHours"),
-  conversionWindowHours: genMetricOverrideResolver("conversionWindowHours"),
+  srmThreshold: genDefaultResolver("srmThreshold"),
+  targetMDE: metricTargetMDEResolver(),
+  delayHours: genMetricOverrideResolver("delayHours"),
+  windowType: genMetricOverrideResolver("windowType"),
+  windowHours: genMetricOverrideResolver("windowHours"),
   winRisk: genMetricOverrideResolver("winRisk"),
   loseRisk: genMetricOverrideResolver("loseRisk"),
+  secureAttributeSalt: genDefaultResolver("secureAttributeSalt"),
+  killswitchConfirmation: genDefaultResolver("killswitchConfirmation"),
+  requireReviews: genDefaultResolver("requireReviews"),
+  featureKeyExample: genDefaultResolver("featureKeyExample"),
+  featureRegexValidator: genDefaultResolver("featureRegexValidator"),
+  banditScheduleValue: genDefaultResolver("banditScheduleValue"),
+  banditScheduleUnit: genDefaultResolver("banditScheduleUnit"),
+  banditBurnInValue: genDefaultResolver("banditBurnInValue"),
+  banditBurnInUnit: genDefaultResolver("banditBurnInUnit"),
+  experimentMinLengthDays: genDefaultResolver("experimentMinLengthDays"),
+  experimentMaxLengthDays: genDefaultResolver("experimentMaxLengthDays"),
+  maxMetricSliceLevels: genDefaultResolver("maxMetricSliceLevels"),
+  useStickyBucketing: genDefaultResolver("useStickyBucketing"),
+  // TODO prior resolvers
 };
 
 const scopeSettings = (
   baseSettings: ScopedSettings,
-  scopes: ScopeDefinition
+  scopes: ScopeDefinition,
 ): {
   settings: ScopedSettings;
   scopeSettings: ScopeSettingsFn;
@@ -97,7 +140,7 @@ const scopeSettings = (
       acc[fieldName as keyof Settings] = resolver(ctx);
       return acc;
     },
-    {} as ScopedSettings
+    {} as ScopedSettings,
   );
 
   return {
@@ -109,37 +152,31 @@ const scopeSettings = (
 // todo: currently for org-level interface
 // turns an InputSettings into ScopedSettings
 const normalizeInputSettings = (
-  inputSettings: InputSettings
+  inputSettings: InputSettings,
 ): ScopedSettings => {
   const scopedSettings: ScopedSettings = {} as ScopedSettings;
   const baseSettings = genDefaultSettings();
 
   for (const key in baseSettings) {
     scopedSettings[key as keyof Settings] = {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error - todo: we need to figure out how to resolve the type
       value:
         inputSettings[key as keyof Settings] ??
         baseSettings[key as keyof Settings],
       meta: {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         reason: "org-level setting applied",
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
         scopeApplied: "organization",
       },
-    };
+      // eslint-disable-next-line
+    } as any;
   }
 
   return scopedSettings;
 };
 
 export const getScopedSettings = (
-  scopes: ScopeDefinition
+  scopes: ScopeDefinition,
 ): ScopedSettingsReturn => {
   const settings = normalizeInputSettings(scopes.organization.settings || {});
-
   if (
     scopes?.metric &&
     scopes.metric.denominator &&
@@ -151,5 +188,3 @@ export const getScopedSettings = (
 
   return scopeSettings(settings, scopes);
 };
-
-export type { ScopedSettings } from "./types";

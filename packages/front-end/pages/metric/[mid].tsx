@@ -1,37 +1,36 @@
 import { useRouter } from "next/router";
-import React, { FC, useState, useEffect, Fragment } from "react";
-import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
+import React, {
+  FC,
+  useState,
+  useEffect,
+  Fragment,
+  ReactNode,
+  ReactElement,
+} from "react";
 import Link from "next/link";
-import {
-  FaAngleLeft,
-  FaArchive,
-  FaChevronRight,
-  FaQuestionCircle,
-  FaTimes,
-} from "react-icons/fa";
+import { FaQuestionCircle, FaTimes } from "react-icons/fa";
 import { MetricInterface } from "back-end/types/metric";
 import { useForm } from "react-hook-form";
 import { BsGear } from "react-icons/bs";
 import { IdeaInterface } from "back-end/types/idea";
-import { date } from "shared";
+import { date } from "shared/dates";
+import { getDemoDatasourceProjectIdForOrganization } from "shared/demo-datasource";
+import {
+  DEFAULT_LOSE_RISK_THRESHOLD,
+  DEFAULT_WIN_RISK_THRESHOLD,
+} from "shared/constants";
+import { Box, Flex } from "@radix-ui/themes";
+import { isBinomialMetric } from "shared/experiments";
 import useApi from "@/hooks/useApi";
 import useOrgSettings from "@/hooks/useOrgSettings";
 import DiscussionThread from "@/components/DiscussionThread";
-import useSwitchOrg from "@/services/useSwitchOrg";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import DeleteButton from "@/components/DeleteButton/DeleteButton";
 import { useAuth } from "@/services/auth";
-import {
-  formatConversionRate,
-  defaultWinRiskThreshold,
-  defaultLoseRiskThreshold,
-  checkMetricProjectPermissions,
-} from "@/services/metrics";
-import MetricForm from "@/components/Metrics/MetricForm";
-import Tabs from "@/components/Tabs/Tabs";
-import Tab from "@/components/Tabs/Tab";
-import StatusIndicator from "@/components/Experiment/StatusIndicator";
+import { getMetricFormatter } from "@/services/metrics";
+import MetricForm, { usesValueColumn } from "@/components/Metrics/MetricForm";
+import { TabsList, Tabs, TabsContent, TabsTrigger } from "@/ui/Tabs";
 import HistoryTable from "@/components/HistoryTable";
 import DateGraph from "@/components/Metrics/DateGraph";
 import RunQueriesButton, {
@@ -40,15 +39,11 @@ import RunQueriesButton, {
 import ViewAsyncQueriesButton from "@/components/Queries/ViewAsyncQueriesButton";
 import RightRailSection from "@/components/Layout/RightRailSection";
 import RightRailSectionGroup from "@/components/Layout/RightRailSectionGroup";
-import InlineForm from "@/components/Forms/InlineForm";
-import EditableH1 from "@/components/Forms/EditableH1";
 import { useDefinitions } from "@/services/DefinitionsContext";
 import Code from "@/components/SyntaxHighlighting/Code";
-import { getDefaultConversionWindowHours, hasFileConfig } from "@/services/env";
 import PickSegmentModal from "@/components/Segments/PickSegmentModal";
 import MoreMenu from "@/components/Dropdown/MoreMenu";
 import Button from "@/components/Button";
-import usePermissions from "@/hooks/usePermissions";
 import EditTagsForm from "@/components/Tags/EditTagsForm";
 import EditOwnerModal from "@/components/Owner/EditOwnerModal";
 import MarkdownInlineEdit from "@/components/Markdown/MarkdownInlineEdit";
@@ -56,13 +51,25 @@ import { useOrganizationMetricDefaults } from "@/hooks/useOrganizationMetricDefa
 import ProjectBadges from "@/components/ProjectBadges";
 import EditProjectsForm from "@/components/Projects/EditProjectsForm";
 import { GBCuped, GBEdit } from "@/components/Icons";
-import Toggle from "@/components/Forms/Toggle";
+import Switch from "@/ui/Switch";
 import Tooltip from "@/components/Tooltip/Tooltip";
+import { useCurrency } from "@/hooks/useCurrency";
+import { DeleteDemoDatasourceButton } from "@/components/DemoDataSourcePage/DemoDataSourcePage";
+import { useUser } from "@/services/UserContext";
+import PageHead from "@/components/Layout/PageHead";
+import { capitalizeFirstLetter } from "@/services/utils";
+import MetricName from "@/components/Metrics/MetricName";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import MetricPriorRightRailSectionGroup from "@/components/Metrics/MetricPriorRightRailSectionGroup";
+import CustomMarkdown from "@/components/Markdown/CustomMarkdown";
+import MetricExperiments from "@/components/MetricExperiments/MetricExperiments";
+import { MetricModal } from "@/components/FactTables/NewMetricModal";
 
 const MetricPage: FC = () => {
   const router = useRouter();
   const { mid } = router.query;
-  const permissions = usePermissions();
+  const permissionsUtil = usePermissionsUtil();
+  const displayCurrency = useCurrency();
   const { apiCall } = useAuth();
   const {
     mutateDefinitions,
@@ -73,8 +80,10 @@ const MetricPage: FC = () => {
     segments,
   } = useDefinitions();
   const settings = useOrgSettings();
+  const { organization } = useUser();
+
   const [editModalOpen, setEditModalOpen] = useState<boolean | number>(false);
-  const [editing, setEditing] = useState(false);
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState<boolean>(false);
   const [editTags, setEditTags] = useState(false);
   const [editProjects, setEditProjects] = useState(false);
   const [editOwnerModal, setEditOwnerModal] = useState(false);
@@ -83,11 +92,11 @@ const MetricPage: FC = () => {
   const storageKeySum = `metric_smoothBy_sum`;
   const [smoothByAvg, setSmoothByAvg] = useLocalStorage<"day" | "week">(
     storageKeyAvg,
-    "day"
+    "day",
   );
   const [smoothBySum, setSmoothBySum] = useLocalStorage<"day" | "week">(
     storageKeySum,
-    "day"
+    "day",
   );
 
   const [hoverDate, setHoverDate] = useState<number | null>(null);
@@ -97,16 +106,14 @@ const MetricPage: FC = () => {
 
   const { data, error, mutate } = useApi<{
     metric: MetricInterface;
-    experiments: Partial<ExperimentInterfaceStringDates>[];
   }>(`/metric/${mid}`);
 
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
-  useSwitchOrg(data?.metric?.organization);
-
   const {
+    metricDefaults,
     getMinSampleSizeForMetric,
     getMinPercentageChangeForMetric,
     getMaxPercentageChangeForMetric,
+    getTargetMDEForMetric,
   } = useOrganizationMetricDefaults();
 
   const form = useForm<{ name: string; description: string }>();
@@ -126,43 +133,51 @@ const MetricPage: FC = () => {
   }
 
   const metric = data.metric;
-  const canEditMetric =
-    checkMetricProjectPermissions(metric, permissions) && !hasFileConfig();
-  const canEditProjects =
-    permissions.check("createMetrics", "") && !hasFileConfig();
+  const canDuplicateMetric = permissionsUtil.canCreateMetric({
+    // Don't pass in managedBy as we allow non-admins to duplicate official metrics - the duplicated metric will be non-official
+    projects: metric.projects,
+  });
+  let canEditMetric = permissionsUtil.canUpdateMetric(metric, {});
+  let canDeleteMetric = permissionsUtil.canDeleteMetric(metric);
+
+  // Additional check if managed by api or config
+  if (metric.managedBy && ["api", "config"].includes(metric.managedBy)) {
+    canEditMetric = false;
+    canDeleteMetric = false;
+  }
   const datasource = metric.datasource
     ? getDatasourceById(metric.datasource)
     : null;
-  const experiments = data.experiments;
+  const canRunMetricQuery =
+    datasource && permissionsUtil.canRunMetricQueries(datasource);
 
-  let analysis = data.metric.analysis;
+  let analysis = data.metric.analysis || null;
   if (!analysis || !("average" in analysis)) {
-    // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'null' is not assignable to type 'MetricAnaly... Remove this comment to see the full error message
     analysis = null;
   }
 
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
-  const segment = getSegmentById(metric.segment);
+  const segment = getSegmentById(metric.segment || "");
 
   const supportsSQL = datasource?.properties?.queryLanguage === "sql";
   const customzeTimestamp = supportsSQL;
   const customizeUserIds = supportsSQL;
 
-  const status = getQueryStatus(metric.queries || [], metric.analysisError);
+  const { status } = getQueryStatus(metric.queries || [], metric.analysisError);
   const hasQueries = metric.queries?.length > 0;
 
   let regressionAdjustmentAvailableForMetric = true;
   let regressionAdjustmentAvailableForMetricReason = <></>;
-  if (metric.denominator) {
-    const denominator = metrics.find((m) => m.id === metric.denominator);
-    if (denominator?.type === "count") {
-      regressionAdjustmentAvailableForMetric = false;
-      regressionAdjustmentAvailableForMetricReason = (
-        <>
-          Not available for ratio metrics with <em>count</em> denominators.
-        </>
-      );
-    }
+  const denominator = metric.denominator
+    ? metrics.find((m) => m.id === metric.denominator)
+    : undefined;
+  if (denominator && !isBinomialMetric(denominator)) {
+    regressionAdjustmentAvailableForMetric = false;
+    regressionAdjustmentAvailableForMetricReason = (
+      <>
+        Not available for non-fact ratio metrics with{" "}
+        <em>{denominator.type}</em> denominators.
+      </>
+    );
   }
   if (metric.aggregation) {
     regressionAdjustmentAvailableForMetric = false;
@@ -171,8 +186,15 @@ const MetricPage: FC = () => {
     );
   }
 
+  const variables = {
+    metricName: metric.name,
+    tags: metric.tags || [],
+    metricType: metric.type,
+    metricDatasource: datasource?.name || "",
+  };
+
   const getMetricUsage = (metric: MetricInterface) => {
-    return async () => {
+    return async (): Promise<ReactElement | null> => {
       try {
         const res = await apiCall<{
           status: number;
@@ -182,46 +204,30 @@ const MetricPage: FC = () => {
           method: "GET",
         });
 
-        const experimentLinks = [];
-        const ideaLinks = [];
+        const experimentLinks: (string | ReactNode)[] = [];
+        const ideaLinks: (string | ReactNode)[] = [];
         let subtitleText = "This metric is not referenced anywhere else.";
-        // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-        if (res.ideas?.length > 0 || res.experiments?.length > 0) {
+        if (res.ideas?.length || res.experiments?.length) {
           subtitleText = "This metric is referenced in ";
-          const refs = [];
-          // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-          if (res.experiments.length) {
+          const refs: (string | ReactNode)[] = [];
+          if (res.experiments && res.experiments.length) {
             refs.push(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
               res.experiments.length === 1
                 ? "1 experiment"
-                : // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-                  res.experiments.length + " experiments"
+                : res.experiments.length + " experiments",
             );
-            // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
             res.experiments.forEach((e) => {
               experimentLinks.push(
-                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Element' is not assignable to pa... Remove this comment to see the full error message
-                <Link href={`/experiment/${e.id}`}>
-                  <a>{e.name}</a>
-                </Link>
+                <Link href={`/experiment/${e.id}`}>{e.name}</Link>,
               );
             });
           }
-          // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-          if (res.ideas.length) {
+          if (res.ideas && res.ideas.length) {
             refs.push(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-              res.ideas.length === 1 ? "1 idea" : res.ideas.length + " ideas"
+              res.ideas.length === 1 ? "1 idea" : res.ideas.length + " ideas",
             );
-            // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
             res.ideas.forEach((i) => {
-              ideaLinks.push(
-                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Element' is not assignable to pa... Remove this comment to see the full error message
-                <Link href={`/idea/${i.id}`}>
-                  <a>{i.text}</a>
-                </Link>
-              );
+              ideaLinks.push(<Link href={`/idea/${i.id}`}>{i.text}</Link>);
             });
           }
           subtitleText += refs.join(" and ");
@@ -286,6 +292,7 @@ const MetricPage: FC = () => {
           </div>
         );
       }
+      return null;
     };
   };
 
@@ -301,17 +308,28 @@ const MetricPage: FC = () => {
             setEditModalOpen(false);
           }}
           onSuccess={() => {
-            mutateDefinitions();
             mutate();
           }}
+        />
+      )}
+      {duplicateModalOpen && (
+        <MetricModal
+          mode="duplicate"
+          currentMetric={{
+            ...metric,
+            name: metric.name + " (copy)",
+            // If managedBy is admin, only copy that over if the user has the ManageOfficialResources policy
+            managedBy: "",
+          }}
+          close={() => setDuplicateModalOpen(false)}
+          source="metrics-detail"
         />
       )}
       {editTags && (
         <EditTagsForm
           cancel={() => setEditTags(false)}
           mutate={mutate}
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string[] | undefined' is not assignable to t... Remove this comment to see the full error message
-          tags={metric.tags}
+          tags={metric.tags || []}
           save={async (tags) => {
             await apiCall(`/metric/${metric.id}`, {
               method: "PUT",
@@ -320,14 +338,28 @@ const MetricPage: FC = () => {
               }),
             });
           }}
+          source="mid"
         />
       )}
       {editProjects && (
         <EditProjectsForm
+          label={
+            <>
+              Projects{" "}
+              <Tooltip
+                body={
+                  "The dropdown below has been filtered to only include projects where you have permission to update Metrics"
+                }
+              />
+            </>
+          }
           cancel={() => setEditProjects(false)}
+          entityName="Metric"
           mutate={mutate}
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string[] | undefined' is not assignable to t... Remove this comment to see the full error message
-          projects={metric.projects}
+          value={metric.projects || []}
+          permissionRequired={(project) =>
+            permissionsUtil.canUpdateMetric({ projects: [project] }, {})
+          }
           save={async (projects) => {
             await apiCall(`/metric/${metric.id}`, {
               method: "PUT",
@@ -335,11 +367,13 @@ const MetricPage: FC = () => {
                 projects,
               }),
             });
+            mutateDefinitions({});
           }}
         />
       )}
       {editOwnerModal && (
         <EditOwnerModal
+          resourceType="metric"
           cancel={() => setEditOwnerModal(false)}
           owner={metric.owner}
           save={async (owner) => {
@@ -347,8 +381,8 @@ const MetricPage: FC = () => {
               method: "PUT",
               body: JSON.stringify({ owner }),
             });
-            mutate();
           }}
+          mutate={mutate}
         />
       )}
       {segmentOpen && (
@@ -373,13 +407,13 @@ const MetricPage: FC = () => {
           segment={metric.segment || ""}
         />
       )}
-      <div className="mb-2">
-        <Link href="/metrics">
-          <a>
-            <FaAngleLeft /> All Metrics
-          </a>
-        </Link>
-      </div>
+
+      <PageHead
+        breadcrumb={[
+          { display: "Metrics", href: "/metrics" },
+          { display: metric.name },
+        ]}
+      />
 
       {metric.status === "archived" && (
         <div className="alert alert-secondary mb-2">
@@ -389,17 +423,53 @@ const MetricPage: FC = () => {
         </div>
       )}
 
+      {metric.projects?.includes(
+        getDemoDatasourceProjectIdForOrganization(organization.id),
+      ) && (
+        <div className="alert alert-info mb-3 d-flex align-items-center mt-3">
+          <div className="flex-1">
+            This metric is part of our sample dataset. You can safely delete
+            this once you are done exploring.
+          </div>
+          <div style={{ width: 180 }} className="ml-2">
+            <DeleteDemoDatasourceButton
+              onDelete={() => router.push("/metrics")}
+              source="metric"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="row align-items-center mb-2">
-        <h1 className="col-auto">{metric.name}</h1>
+        <h1 className="col-auto">
+          <MetricName id={metric.id} />
+        </h1>
         <div style={{ flex: 1 }} />
-        {canEditMetric && (
-          <div className="col-auto">
-            <MoreMenu>
+        <div className="col-auto">
+          <MoreMenu>
+            {canEditMetric ? (
+              <Button
+                className="btn dropdown-item py-2"
+                color=""
+                onClick={() => setEditModalOpen(true)}
+              >
+                Edit metric
+              </Button>
+            ) : null}
+            {canDuplicateMetric ? (
+              <Button
+                className="btn dropdown-item py-2"
+                color=""
+                onClick={() => setDuplicateModalOpen(true)}
+              >
+                Duplicate metric
+              </Button>
+            ) : null}
+            {canDeleteMetric ? (
               <DeleteButton
                 className="btn dropdown-item py-2"
                 text="Delete"
                 title="Delete this metric"
-                // @ts-expect-error TS(2322) If you come across this, please fix it!: Type '() => Promise<JSX.Element | undefined>' is n... Remove this comment to see the full error message
                 getConfirmationContent={getMetricUsage(metric)}
                 onClick={async () => {
                   await apiCall(`/metric/${metric.id}`, {
@@ -408,9 +478,11 @@ const MetricPage: FC = () => {
                   mutateDefinitions({});
                   router.push("/metrics");
                 }}
-                useIcon={true}
+                useIcon={false}
                 displayName={"Metric '" + metric.name + "'"}
               />
+            ) : null}
+            {canEditMetric ? (
               <Button
                 className="btn dropdown-item py-2"
                 color=""
@@ -427,28 +499,24 @@ const MetricPage: FC = () => {
                   mutate();
                 }}
               >
-                <FaArchive />{" "}
                 {metric.status === "archived" ? "Unarchive" : "Archive"}
               </Button>
-            </MoreMenu>
-          </div>
-        )}
+            ) : null}
+          </MoreMenu>
+        </div>
       </div>
       <div className="row mb-3 align-items-center">
         <div className="col">
           Projects:{" "}
-          {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-          {metric?.projects?.length > 0 ? (
-            <ProjectBadges
-              projectIds={metric.projects}
-              className="badge-ellipsis align-middle"
-            />
+          {metric?.projects?.length ? (
+            <ProjectBadges resourceType="metric" projectIds={metric.projects} />
           ) : (
-            <ProjectBadges className="badge-ellipsis align-middle" />
+            <ProjectBadges resourceType="metric" />
           )}
-          {canEditProjects && (
+          {canEditMetric && (
             <a
               href="#"
+              className="ml-2"
               onClick={(e) => {
                 e.preventDefault();
                 setEditProjects(true);
@@ -460,255 +528,266 @@ const MetricPage: FC = () => {
         </div>
       </div>
 
+      <div className="mt-3">
+        <CustomMarkdown page={"metric"} variables={variables} />
+      </div>
+
       <div className="row">
         <div className="col-12 col-md-8">
-          <Tabs newStyle={true}>
-            <Tab display="Info" anchor="info" lazy={true}>
-              <div className="row">
-                <div className="col-12">
-                  <InlineForm
-                    editing={editing}
-                    setEdit={setEditing}
-                    canEdit={canEditMetric}
-                    onSave={form.handleSubmit(async (value) => {
-                      await apiCall(`/metric/${metric.id}`, {
-                        method: "PUT",
-                        body: JSON.stringify(value),
-                      });
-                      await mutate();
-                      mutateDefinitions({});
-                      setEditing(false);
-                    })}
-                    onStartEdit={() => {
-                      form.setValue("name", metric.name || "");
-                      form.setValue("description", metric.description || "");
-                    }}
-                  >
-                    {({ cancel, save }) => (
-                      <div className="mb-4">
-                        <div className="row mb-3">
-                          <div className="col">
-                            <EditableH1
-                              value={form.watch("name")}
-                              onChange={(e) =>
-                                form.setValue("name", e.target.value)
+          <Tabs defaultValue="info" persistInURL={true}>
+            <TabsList>
+              <TabsTrigger value="info">Info</TabsTrigger>
+              <TabsTrigger value="experiments">Experiments</TabsTrigger>
+              <TabsTrigger value="discussion">Discussion</TabsTrigger>
+              <TabsTrigger value="history">History</TabsTrigger>
+            </TabsList>
+            <Box pt="4">
+              <TabsContent value="info">
+                <Box className="appbox px-4 py-3 mb-5">
+                  <div className="row">
+                    <div className="col-12">
+                      <MarkdownInlineEdit
+                        header="Description"
+                        save={async (description) => {
+                          await apiCall(`/metric/${metric.id}`, {
+                            method: "PUT",
+                            body: JSON.stringify({
+                              description,
+                            }),
+                          });
+                          await mutate();
+                          mutateDefinitions({});
+                        }}
+                        aiSuggestFunction={async () => {
+                          const res = await apiCall<{
+                            status: number;
+                            data: {
+                              description: string;
+                            };
+                          }>(
+                            `/metrics/${metric.id}/gen-description`,
+                            {
+                              method: "GET",
+                            },
+                            (responseData) => {
+                              if (responseData.status === 429) {
+                                const retryAfter = parseInt(
+                                  responseData.retryAfter,
+                                );
+                                const hours = Math.floor(retryAfter / 3600);
+                                const minutes = Math.floor(
+                                  (retryAfter % 3600) / 60,
+                                );
+                                throw new Error(
+                                  `You have reached the AI request limit. Try again in ${hours} hours and ${minutes} minutes.`,
+                                );
+                              } else {
+                                throw new Error("Error getting AI suggestion");
                               }
-                              editing={canEditMetric && editing}
-                              save={save}
-                              cancel={cancel}
-                            />
-                          </div>
-                          {canEditMetric && !editing && (
-                            <div className="col-auto">
-                              <button
-                                className="btn btn-outline-primary"
+                            },
+                          );
+                          if (res?.status !== 200) {
+                            throw new Error("Could not load AI suggestions");
+                          }
+                          return res.data.description;
+                        }}
+                        aiButtonText="Suggest Description"
+                        aiSuggestionHeader="Suggested Description"
+                        emptyHelperText="Add a description to keep your team informed about how to apply this metric."
+                        value={metric.description}
+                        canCreate={canEditMetric}
+                        canEdit={canEditMetric}
+                        label="Description"
+                      />
+                    </div>
+                  </div>
+                </Box>
+                {!!datasource && (
+                  <div className="appbox px-4 py-3 mb-5">
+                    <div className="row mb-1 align-items-center">
+                      <div className="col-auto">
+                        <h3 className="d-inline-block mb-0">Data Preview</h3>
+                      </div>
+                      <div className="small col-auto">
+                        {segments.length > 0 && (
+                          <>
+                            {segment?.name ? (
+                              <>
+                                Segment applied:{" "}
+                                <span className="badge badge-primary mr-1">
+                                  {segment?.name || "Everyone"}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="mr-1">Apply a segment</span>
+                            )}
+                            {canEditMetric && canRunMetricQuery && (
+                              <a
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  setEditing(true);
+                                  setSegmentOpen(true);
                                 }}
-                              >
-                                Edit
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </InlineForm>
-                  <MarkdownInlineEdit
-                    save={async (description) => {
-                      await apiCall(`/metric/${metric.id}`, {
-                        method: "PUT",
-                        body: JSON.stringify({
-                          description,
-                        }),
-                      });
-                      await mutate();
-                      mutateDefinitions({});
-                    }}
-                    value={metric.description}
-                    canCreate={canEditMetric}
-                    canEdit={canEditMetric}
-                    label="Description"
-                  />
-                  <hr />
-                  {!!datasource && (
-                    <div>
-                      <div className="row mb-1 align-items-center">
-                        <div className="col-auto">
-                          <h3 className="d-inline-block mb-0">Data Preview</h3>
-                        </div>
-                        <div style={{ flex: 1 }} />
-                        <div className="col-auto">
-                          {permissions.check("runQueries", "") && (
-                            <form
-                              onSubmit={async (e) => {
-                                e.preventDefault();
-                                try {
-                                  await apiCall(
-                                    `/metric/${metric.id}/analysis`,
-                                    {
-                                      method: "POST",
-                                    }
-                                  );
-                                  mutate();
-                                } catch (e) {
-                                  console.error(e);
-                                }
-                              }}
-                            >
-                              <RunQueriesButton
-                                icon="refresh"
-                                cta={analysis ? "Refresh Data" : "Run Analysis"}
-                                initialStatus={getQueryStatus(
-                                  metric.queries || [],
-                                  metric.analysisError
-                                )}
-                                statusEndpoint={`/metric/${metric.id}/analysis/status`}
-                                cancelEndpoint={`/metric/${metric.id}/analysis/cancel`}
-                                color="outline-primary"
-                                onReady={() => {
-                                  mutate();
-                                }}
-                              />
-                            </form>
-                          )}
-                        </div>
-                      </div>
-                      <div className="row justify-content-between">
-                        <div className="col-auto">
-                          {segments.length > 0 && (
-                            <>
-                              {segment?.name ? (
-                                <>
-                                  Segment applied:{" "}
-                                  <span className="badge badge-primary mr-1">
-                                    {segment?.name || "Everyone"}
-                                  </span>
-                                </>
-                              ) : (
-                                <span className="mr-1">No segment applied</span>
-                              )}
-                              {canEditMetric &&
-                                permissions.check("runQueries", "") && (
-                                  <a
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      setSegmentOpen(true);
-                                    }}
-                                    href="#"
-                                  >
-                                    <BsGear />
-                                  </a>
-                                )}
-                            </>
-                          )}
-                        </div>
-                        {analysis && (
-                          <div className="col-auto text-muted">
-                            <small>
-                              Last updated on {date(analysis?.createdAt)}
-                            </small>
-                          </div>
-                        )}
-                      </div>
-                      {hasQueries && status === "failed" && (
-                        <div className="alert alert-danger my-3">
-                          Error running the analysis.{" "}
-                          <ViewAsyncQueriesButton
-                            queries={metric.queries.map((q) => q.query)}
-                            error={metric.analysisError}
-                            ctaCommponent={(onClick) => (
-                              <a
-                                className="alert-link"
                                 href="#"
-                                onClick={onClick}
                               >
-                                View Queries
+                                <BsGear />
                               </a>
                             )}
-                          />{" "}
-                          for more info
+                          </>
+                        )}
+                      </div>
+                      <div style={{ flex: 1 }} />
+                      <div className="col-auto">
+                        {canRunMetricQuery && (
+                          <form
+                            onSubmit={async (e) => {
+                              e.preventDefault();
+                              try {
+                                await apiCall(`/metric/${metric.id}/analysis`, {
+                                  method: "POST",
+                                });
+                                mutate();
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                          >
+                            <RunQueriesButton
+                              icon="refresh"
+                              cta={analysis ? "Refresh Data" : "Run Analysis"}
+                              mutate={mutate}
+                              model={metric}
+                              cancelEndpoint={`/metric/${metric.id}/analysis/cancel`}
+                              color="outline-primary"
+                            />
+                          </form>
+                        )}
+                      </div>
+                    </div>
+                    <div className="row flex justify-content-between">
+                      <div className="small text-muted col">
+                        {denominator && (
+                          <>
+                            The data below only aggregates the numerator. The
+                            denominator ({denominator.name}) is only used in
+                            experiment analyses.
+                          </>
+                        )}
+                      </div>
+                      {analysis && (
+                        <div className="small text-muted col-auto">
+                          Last updated on {date(analysis?.createdAt)}
                         </div>
                       )}
-                      {hasQueries && status === "running" && (
+                    </div>
+                    {hasQueries && status === "failed" && (
+                      <div className="alert alert-danger my-3">
+                        Error running the analysis.{" "}
+                        <ViewAsyncQueriesButton
+                          queries={metric.queries.map((q) => q.query)}
+                          error={metric.analysisError}
+                          ctaComponent={(onClick) => (
+                            <a
+                              className="alert-link"
+                              href="#"
+                              onClick={onClick}
+                            >
+                              View Queries
+                            </a>
+                          )}
+                        />{" "}
+                        for more info
+                      </div>
+                    )}
+                    {hasQueries && status === "running" && (
+                      <div className="alert alert-info">
+                        Your analysis is currently running.{" "}
+                        {analysis && "The data below is from the previous run."}
+                      </div>
+                    )}
+                    {analysis &&
+                      status === "succeeded" &&
+                      (metric.segment || analysis.segment) &&
+                      metric.segment !== analysis.segment && (
                         <div className="alert alert-info">
-                          Your analysis is currently running.{" "}
-                          {analysis &&
-                            "The data below is from the previous run."}
+                          The graphs below are using an old Segment. Update them
+                          to see the latest numbers.
                         </div>
                       )}
-                      {analysis &&
-                        status === "succeeded" &&
-                        (metric.segment || analysis.segment) &&
-                        metric.segment !== analysis.segment && (
-                          <div className="alert alert-info">
-                            The graphs below are using an old Segment. Update
-                            them to see the latest numbers.
+                    {analysis && (
+                      <div className="mb-4">
+                        {metric.type !== "binomial" && (
+                          <div className="d-flex flex-row align-items-end">
+                            <div style={{ fontSize: "2.5em" }}>
+                              {getMetricFormatter(metric.type)(
+                                analysis.average,
+                                {
+                                  currency: displayCurrency,
+                                },
+                              )}
+                            </div>
+                            <div className="pb-2 ml-1">average</div>
                           </div>
                         )}
-                      {analysis && (
-                        <div className="mb-4">
-                          {metric.type !== "binomial" && (
-                            <div className="d-flex flex-row align-items-end">
-                              <div style={{ fontSize: "2.5em" }}>
-                                {formatConversionRate(
-                                  metric.type,
-                                  analysis.average
-                                )}
-                              </div>
-                              <div className="pb-2 ml-1">average</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {analysis?.dates && analysis.dates.length > 0 && (
-                        <div className="mb-4">
-                          <div className="row mt-3">
-                            <div className="col-auto">
-                              <h5 className="mb-1 mt-1">
-                                {metric.type === "binomial"
-                                  ? "Conversions"
-                                  : "Metric Value"}{" "}
-                                Over Time
-                              </h5>
-                            </div>
+                      </div>
+                    )}
+                    {analysis?.dates && analysis.dates.length > 0 && (
+                      <div className="mb-4">
+                        <div className="row mt-3">
+                          <div className="col-auto">
+                            <h5 className="mb-1 mt-1">
+                              {metric.type === "binomial"
+                                ? "Conversions"
+                                : "Metric Value"}{" "}
+                              Over Time
+                            </h5>
                           </div>
+                        </div>
 
-                          {metric.type !== "binomial" && (
-                            <>
-                              <div className="row mt-4 mb-1">
-                                <div className="col">
-                                  <Tooltip
-                                    body={
-                                      <>
-                                        <p>
-                                          This figure shows the average metric
-                                          value on a day divided by number of
-                                          unique units (e.g. users) in the
-                                          metric source on that day.
-                                        </p>
-                                        <p>
-                                          The standard deviation shows the
-                                          spread of the daily user metric
-                                          values.
-                                        </p>
-                                        <p>
-                                          When smoothing is turned on, we simply
-                                          average values and standard deviations
-                                          over the 7 trailing days (including
-                                          the selected day).
-                                        </p>
-                                      </>
-                                    }
-                                  >
-                                    <strong className="ml-4 align-bottom">
-                                      Daily Average <FaQuestionCircle />
-                                    </strong>
-                                  </Tooltip>
-                                </div>
-                                <div className="col">
-                                  <div className="float-right mr-2">
+                        {metric.type !== "binomial" && (
+                          <>
+                            <div className="row mt-4 mb-1">
+                              <div className="col">
+                                <Tooltip
+                                  body={
+                                    <>
+                                      <p>
+                                        This figure shows the average metric
+                                        value on a day divided by number of
+                                        unique units (e.g. users) in the metric
+                                        source on that day.
+                                      </p>
+                                      <p>
+                                        The standard deviation shows the spread
+                                        of the daily user metric values.
+                                      </p>
+                                      <p>
+                                        When smoothing is turned on, we simply
+                                        average values and standard deviations
+                                        over the 7 trailing days (including the
+                                        selected day).
+                                      </p>
+                                    </>
+                                  }
+                                >
+                                  <strong className="ml-4 align-bottom">
+                                    Daily Average <FaQuestionCircle />
+                                  </strong>
+                                </Tooltip>
+                              </div>
+                              <div className="col">
+                                <div className="float-right mr-2">
+                                  <Flex align="center" gap="1">
+                                    <Switch
+                                      value={smoothByAvg === "week"}
+                                      onChange={() =>
+                                        setSmoothByAvg(
+                                          smoothByAvg === "week"
+                                            ? "day"
+                                            : "week",
+                                        )
+                                      }
+                                      id="toggle-group-by-avg"
+                                    />
                                     <label
                                       className="small my-0 mr-2 text-right align-middle"
                                       htmlFor="toggle-group-by-avg"
@@ -717,76 +796,74 @@ const MetricPage: FC = () => {
                                       <br />
                                       (7 day trailing)
                                     </label>
-                                    <Toggle
-                                      value={smoothByAvg === "week"}
-                                      setValue={() =>
-                                        setSmoothByAvg(
-                                          smoothByAvg === "week"
-                                            ? "day"
-                                            : "week"
-                                        )
-                                      }
-                                      id="toggle-group-by-avg"
-                                      className="align-middle"
-                                    />
-                                  </div>
+                                  </Flex>
                                 </div>
                               </div>
-                              <DateGraph
-                                type={metric.type}
-                                method="avg"
-                                dates={analysis.dates}
-                                smoothBy={smoothByAvg}
-                                onHover={onHoverCallback}
-                                hoverDate={hoverDate}
-                              />
-                            </>
-                          )}
-
-                          <div className="row mt-4 mb-1">
-                            <div className="col">
-                              <Tooltip
-                                body={
-                                  <>
-                                    {metric.type !== "binomial" ? (
-                                      <>
-                                        <p>
-                                          This figure shows the daily sum of
-                                          values in the metric source on that
-                                          day.
-                                        </p>
-                                        <p>
-                                          When smoothing is turned on, we simply
-                                          average values over the 7 trailing
-                                          days (including the selected day).
-                                        </p>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <p>
-                                          This figure shows the total count of
-                                          units (e.g. users) in the metric
-                                          source on that day.
-                                        </p>
-                                        <p>
-                                          When smoothing is turned on, we simply
-                                          average counts over the 7 trailing
-                                          days (including the selected day).
-                                        </p>
-                                      </>
-                                    )}
-                                  </>
-                                }
-                              >
-                                <strong className="ml-4 align-bottom">
-                                  Daily{" "}
-                                  {metric.type !== "binomial" ? "Sum" : "Count"}{" "}
-                                  <FaQuestionCircle />
-                                </strong>
-                              </Tooltip>
                             </div>
-                            <div className="col">
-                              <div className="float-right mr-2">
+                            <DateGraph
+                              type={metric.type}
+                              method="avg"
+                              dates={analysis.dates}
+                              smoothBy={smoothByAvg}
+                              onHover={onHoverCallback}
+                              hoverDate={hoverDate}
+                            />
+                          </>
+                        )}
+
+                        <div className="row mt-4 mb-1">
+                          <div className="col">
+                            <Tooltip
+                              body={
+                                <>
+                                  {metric.type !== "binomial" ? (
+                                    <>
+                                      <p>
+                                        This figure shows the daily sum of
+                                        values in the metric source on that day.
+                                      </p>
+                                      <p>
+                                        When smoothing is turned on, we simply
+                                        average values over the 7 trailing days
+                                        (including the selected day).
+                                      </p>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p>
+                                        This figure shows the total count of
+                                        units (e.g. users) in the metric source
+                                        on that day.
+                                      </p>
+                                      <p>
+                                        When smoothing is turned on, we simply
+                                        average counts over the 7 trailing days
+                                        (including the selected day).
+                                      </p>
+                                    </>
+                                  )}
+                                </>
+                              }
+                            >
+                              <strong className="ml-4 align-bottom">
+                                Daily{" "}
+                                {metric.type !== "binomial" ? "Sum" : "Count"}{" "}
+                                <FaQuestionCircle />
+                              </strong>
+                            </Tooltip>
+                          </div>
+                          <div className="col">
+                            <div className="float-right mr-2">
+                              <Flex align="center" gap="1">
+                                <Switch
+                                  value={smoothBySum === "week"}
+                                  onChange={() =>
+                                    setSmoothBySum(
+                                      smoothBySum === "week" ? "day" : "week",
+                                    )
+                                  }
+                                  id="toggle-group-by-sum"
+                                />
                                 <label
                                   className="small my-0 mr-2 text-right align-middle"
                                   htmlFor="toggle-group-by-sum"
@@ -795,84 +872,65 @@ const MetricPage: FC = () => {
                                   <br />
                                   (7 day trailing)
                                 </label>
-                                <Toggle
-                                  value={smoothBySum === "week"}
-                                  setValue={() =>
-                                    setSmoothBySum(
-                                      smoothBySum === "week" ? "day" : "week"
-                                    )
-                                  }
-                                  id="toggle-group-by-sum"
-                                  className="align-middle"
-                                />
-                              </div>
+                              </Flex>
                             </div>
                           </div>
-                          <DateGraph
-                            type={metric.type}
-                            method="sum"
-                            dates={analysis.dates}
-                            smoothBy={smoothBySum}
-                            onHover={onHoverCallback}
-                            hoverDate={hoverDate}
-                          />
                         </div>
-                      )}
-
-                      {!analysis && (
-                        <div>
-                          <em>
-                            No data for this metric yet. Click the Run Analysis
-                            button above.
-                          </em>
-                        </div>
-                      )}
-
-                      {hasQueries && (
-                        <div className="row my-3">
-                          <div className="col-auto">
-                            <ViewAsyncQueriesButton
-                              queries={metric.queries.map((q) => q.query)}
-                              color={status === "failed" ? "danger" : "info"}
-                              error={metric.analysisError}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </Tab>
-            <Tab display="Experiments" anchor="experiments">
-              <h3>Experiments</h3>
-              <p>The most recent 10 experiments using this metric.</p>
-              <div className="list-group">
-                {experiments.map((e) => (
-                  <Link href={`/experiment/${e.id}`} key={e.id}>
-                    <a className="list-group-item list-group-item-action">
-                      <div className="d-flex">
-                        <strong className="mr-3">{e.name}</strong>
-                        <div style={{ flex: 1 }} />
-                        {/* @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'ExperimentStatus | undefined' is not assigna... Remove this comment to see the full error message */}
-                        <StatusIndicator archived={false} status={e.status} />
-                        <FaChevronRight
-                          className="ml-3"
-                          style={{ fontSize: "1.5em" }}
+                        <DateGraph
+                          type={metric.type}
+                          method="sum"
+                          dates={analysis.dates}
+                          smoothBy={smoothBySum}
+                          onHover={onHoverCallback}
+                          hoverDate={hoverDate}
                         />
                       </div>
-                    </a>
-                  </Link>
-                ))}
-              </div>
-            </Tab>
-            <Tab display="Discussion" anchor="discussion" lazy={true}>
-              <h3>Comments</h3>
-              <DiscussionThread type="metric" id={data.metric.id} />
-            </Tab>
-            <Tab display="History" anchor="history" lazy={true}>
-              <HistoryTable type="metric" id={metric.id} />
-            </Tab>
+                    )}
+
+                    {!analysis && (
+                      <div>
+                        <em>
+                          No data for this metric yet.{" "}
+                          {canRunMetricQuery
+                            ? "Click the Run Analysis button above."
+                            : null}
+                        </em>
+                      </div>
+                    )}
+
+                    {hasQueries && (
+                      <div className="row my-3">
+                        <div className="col-auto">
+                          <ViewAsyncQueriesButton
+                            queries={metric.queries.map((q) => q.query)}
+                            color={status === "failed" ? "danger" : "info"}
+                            error={metric.analysisError}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </TabsContent>
+              <TabsContent value="experiments">
+                <Box>
+                  <MetricExperiments metric={metric} outerClassName="" />
+                </Box>
+              </TabsContent>
+              <TabsContent value="discussion">
+                <Box>
+                  <h3>Comments</h3>
+                  <DiscussionThread
+                    type="metric"
+                    id={data.metric.id}
+                    projects={metric.projects || []}
+                  />
+                </Box>
+              </TabsContent>
+              <TabsContent value="history">
+                <HistoryTable type="metric" id={metric.id} />
+              </TabsContent>
+            </Box>
           </Tabs>
         </div>
         <div className="col-12 col-md-4 mt-md-5">
@@ -936,17 +994,16 @@ const MetricPage: FC = () => {
             <RightRailSection
               title="Projects"
               open={() => setEditProjects(true)}
-              canOpen={canEditProjects}
+              canOpen={canEditMetric}
             >
               <RightRailSectionGroup>
-                {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-                {metric?.projects?.length > 0 ? (
+                {metric?.projects?.length ? (
                   <ProjectBadges
+                    resourceType="metric"
                     projectIds={metric.projects}
-                    className="badge-ellipsis align-middle"
                   />
                 ) : (
-                  <ProjectBadges className="badge-ellipsis align-middle" />
+                  <ProjectBadges resourceType="metric" />
                 )}
               </RightRailSectionGroup>
             </RightRailSection>
@@ -971,6 +1028,25 @@ const MetricPage: FC = () => {
                           {metric.userIdTypes}
                         </RightRailSectionGroup>
                       )}
+                      {metric.templateVariables?.eventName && (
+                        <RightRailSectionGroup title="Event Name" type="custom">
+                          <span className="font-weight-bold">
+                            {metric.templateVariables.eventName}
+                          </span>
+                        </RightRailSectionGroup>
+                      )}
+                      {metric.type != "binomial" &&
+                        metric.templateVariables?.valueColumn &&
+                        usesValueColumn(metric.sql) && (
+                          <RightRailSectionGroup
+                            title="Value Column"
+                            type="custom"
+                          >
+                            <span className="font-weight-bold">
+                              {metric.templateVariables.valueColumn}
+                            </span>
+                          </RightRailSectionGroup>
+                        )}
                       <RightRailSectionGroup title="Metric SQL" type="custom">
                         <Code language="sql" code={metric.sql} />
                       </RightRailSectionGroup>
@@ -1003,12 +1079,10 @@ const MetricPage: FC = () => {
                       >
                         {metric.table}
                       </RightRailSectionGroup>
-                      {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-                      {metric.conditions?.length > 0 && (
+                      {metric.conditions && metric.conditions.length > 0 && (
                         <RightRailSectionGroup title="Conditions" type="list">
-                          {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
                           {metric.conditions.map(
-                            (c) => `${c.column} ${c.operator} "${c.value}"`
+                            (c) => `${c.column} ${c.operator} "${c.value}"`,
                           )}
                         </RightRailSectionGroup>
                       )}
@@ -1085,13 +1159,33 @@ const MetricPage: FC = () => {
                       <span className="font-weight-bold">Inverse</span>
                     </li>
                   )}
-                  {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-                  {metric.cap > 0 && (
-                    <li className="mb-2">
-                      <span className="text-gray">Capped value:</span>{" "}
-                      <span className="font-weight-bold">{metric.cap}</span>
-                    </li>
-                  )}
+                  {metric.cappingSettings.type &&
+                    metric.cappingSettings.value && (
+                      <>
+                        <li className="mb-2">
+                          <span className="uppercase-title lg">
+                            {capitalizeFirstLetter(metric.cappingSettings.type)}
+                            {" capping"}
+                          </span>
+                        </li>
+                        <li>
+                          <span className="font-weight-bold">
+                            {metric.cappingSettings.value}
+                          </span>{" "}
+                          {metric.cappingSettings.type === "percentile" ? (
+                            <span className="text-gray">{`(${
+                              100 * metric.cappingSettings.value
+                            } pctile${
+                              metric.cappingSettings.ignoreZeros
+                                ? ", ignoring zeros"
+                                : ""
+                            })`}</span>
+                          ) : (
+                            ""
+                          )}{" "}
+                        </li>
+                      </>
+                    )}
                   {metric.ignoreNulls && (
                     <li className="mb-2">
                       <span className="text-gray">Converted users only:</span>{" "}
@@ -1101,38 +1195,113 @@ const MetricPage: FC = () => {
                 </ul>
               </RightRailSectionGroup>
 
-              {datasource?.properties?.metricCaps && (
-                <RightRailSectionGroup type="custom" empty="">
-                  <ul className="right-rail-subsection list-unstyled mb-4">
-                    <li className="mt-3 mb-1">
-                      <span className="uppercase-title lg">
-                        Conversion Window
-                      </span>
-                    </li>
-                    <li>
-                      <span className="font-weight-bold">
-                        {metric.conversionDelayHours
-                          ? metric.conversionDelayHours + " to "
-                          : ""}
-                        {(metric.conversionDelayHours || 0) +
-                          (metric.conversionWindowHours ||
-                            getDefaultConversionWindowHours())}{" "}
-                        hours
-                      </span>
-                    </li>
-                  </ul>
-                </RightRailSectionGroup>
-              )}
+              <RightRailSectionGroup type="custom" empty="">
+                <ul className="right-rail-subsection list-unstyled mb-4">
+                  <li className="mt-3 mb-1">
+                    <span className="uppercase-title lg">Metric Window</span>
+                  </li>
+                  {metric.windowSettings.type === "conversion" ? (
+                    <>
+                      <li>
+                        <span className="font-weight-bold">
+                          Conversion Window
+                        </span>
+                      </li>
+                      <li>
+                        <span className="text-gray">
+                          {`Require conversions to happen within `}
+                        </span>
+                        <strong>
+                          {metric.windowSettings.windowValue}{" "}
+                          {metric.windowSettings.windowUnit}
+                        </strong>
+                        <span className="text-gray">{` 
+                        of first experiment exposure
+                        ${
+                          metric.windowSettings.delayValue
+                            ? " plus the metric delay"
+                            : ""
+                        }`}</span>
+                      </li>
+                    </>
+                  ) : metric.windowSettings.type === "lookback" ? (
+                    <>
+                      <li>
+                        <span className="font-weight-bold">
+                          Lookback Window
+                        </span>
+                      </li>
+                      <li>
+                        <span className="text-gray">{`Require metric data to be in latest `}</span>
+                        <strong>
+                          {metric.windowSettings.windowValue}{" "}
+                          {metric.windowSettings.windowUnit}
+                        </strong>
+                        <span className="text-gray"> of the experiment</span>
+                      </li>
+                    </>
+                  ) : (
+                    <>
+                      <li>
+                        <span className="font-weight-bold">Disabled</span>
+                      </li>
+                      <li>
+                        <span className="text-gray">{`Include all metric data after first experiment exposure
+                      ${
+                        metric.windowSettings.delayValue
+                          ? " plus the metric delay"
+                          : ""
+                      }`}</span>
+                      </li>
+                    </>
+                  )}
+                  {metric.windowSettings.delayValue ? (
+                    <>
+                      <li className="mt-3 mb-1">
+                        <span className="uppercase-title lg">Metric Delay</span>
+                      </li>
+                      <li className="mt-1">
+                        <span className="font-weight-bold">
+                          {`${metric.windowSettings.delayValue} ${metric.windowSettings.delayUnit}`}
+                        </span>
+                      </li>
+                    </>
+                  ) : null}
+                </ul>
+              </RightRailSectionGroup>
 
               <RightRailSectionGroup type="custom" empty="">
                 <ul className="right-rail-subsection list-unstyled mb-4">
                   <li className="mt-3 mb-1">
-                    <span className="uppercase-title lg">Thresholds</span>
+                    <span className="uppercase-title lg">
+                      Experiment Decision Framework
+                    </span>
                   </li>
                   <li className="mb-2">
-                    <span className="text-gray">Minimum sample size:</span>{" "}
+                    <span className="text-gray">Target MDE:</span>{" "}
                     <span className="font-weight-bold">
-                      {getMinSampleSizeForMetric(metric)}
+                      {getTargetMDEForMetric(metric) * 100}%
+                    </span>
+                  </li>
+                </ul>
+              </RightRailSectionGroup>
+
+              <RightRailSectionGroup type="custom" empty="">
+                <ul className="right-rail-subsection list-unstyled mb-4">
+                  <li className="mt-3 mb-1">
+                    <span className="uppercase-title lg">
+                      Display Thresholds
+                    </span>
+                  </li>
+                  <li className="mb-2">
+                    <span className="text-gray">Minimum metric total:</span>{" "}
+                    <span className="font-weight-bold">
+                      {getMetricFormatter(metric.type)(
+                        getMinSampleSizeForMetric(metric),
+                        {
+                          currency: displayCurrency,
+                        },
+                      )}
                     </span>
                   </li>
                   <li className="mb-2">
@@ -1142,7 +1311,7 @@ const MetricPage: FC = () => {
                     </span>
                   </li>
                   <li className="mb-2">
-                    <span className="text-gray">Min percent change :</span>{" "}
+                    <span className="text-gray">Min percent change:</span>{" "}
                     <span className="font-weight-bold">
                       {getMinPercentageChangeForMetric(metric) * 100}%
                     </span>
@@ -1161,20 +1330,22 @@ const MetricPage: FC = () => {
                   <li className="mb-2">
                     <span className="text-gray">Acceptable risk &lt;</span>{" "}
                     <span className="font-weight-bold">
-                      {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-                      {metric?.winRisk * 100 || defaultWinRiskThreshold * 100}%
+                      {(metric.winRisk || DEFAULT_WIN_RISK_THRESHOLD) * 100}%
                     </span>
                   </li>
                   <li className="mb-2">
                     <span className="text-gray">Unacceptable risk &gt;</span>{" "}
                     <span className="font-weight-bold">
-                      {/* @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'. */}
-                      {metric?.loseRisk * 100 || defaultLoseRiskThreshold * 100}
-                      %
+                      {(metric.loseRisk || DEFAULT_LOSE_RISK_THRESHOLD) * 100}%
                     </span>
                   </li>
                 </ul>
               </RightRailSectionGroup>
+
+              <MetricPriorRightRailSectionGroup
+                metric={metric}
+                metricDefaults={metricDefaults}
+              />
 
               <RightRailSectionGroup type="custom" empty="">
                 <ul className="right-rail-subsection list-unstyled mb-2">
@@ -1182,9 +1353,6 @@ const MetricPage: FC = () => {
                     <span className="uppercase-title lg">
                       <GBCuped size={14} /> Regression Adjustment (CUPED)
                     </span>
-                    <small className="d-block mb-1 text-muted">
-                      Only applicable to frequentist analyses
-                    </small>
                   </li>
                   {!regressionAdjustmentAvailableForMetric ? (
                     <li className="mb-2">

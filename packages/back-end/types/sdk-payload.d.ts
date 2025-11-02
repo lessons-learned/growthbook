@@ -1,45 +1,13 @@
+import type { AutoExperiment } from "@growthbook/growthbook";
 import { FeatureDefinition } from "./api";
-import { VisualChangesetURLPattern } from "./visual-changeset";
 
 // If this changes, also increment the LATEST_SDK_PAYLOAD_SCHEMA_VERSION constant
 export type SDKPayloadContents = {
   features: Record<string, FeatureDefinition>;
-  experiments: SDKExperiment[];
+  holdouts?: Record<string, FeatureDefinition>;
+  experiments: AutoExperiment[];
+  savedGroupsInUse: string[]; // The ids of saved groups to be pulled from Mongo before returning the SDK payload
 };
-
-interface SDKExperiment {
-  // From experiment.trackingKey
-  key: string;
-  status: string;
-  variations: VisualExperimentVariation[];
-  // The hashVersion should be hard-coded to `2`
-  hashVersion: number;
-  // From experiment.hashAttribute
-  hashAttribute: string;
-  urlPatterns: VisualChangesetURLPattern[];
-  // From phases.variationWeights
-  weights?: number[];
-  meta?: VariationMeta[];
-  filters?: Filter[];
-  // From phase.seed
-  seed?: string;
-  // From experiment.name
-  name?: string;
-  // The array index of the latest phase as a string
-  phase?: string;
-  // If the experiment is stopped and `releasedVariationId` is set,
-  // then `force` should be the array index of the released variation
-  force?: number;
-  // From phase.condition
-  condition?: Record<string, unknown>;
-  // From phase.coverage
-  coverage?: number;
-}
-
-interface VisualExperimentVariation {
-  css: string;
-  domMutations: DOMMutation[];
-}
 
 interface DOMMutation {
   selector: string;
@@ -48,13 +16,6 @@ interface DOMMutation {
   value?: string;
   parentSelector?: string;
   insertBeforeSelector?: string;
-}
-
-interface VariationMeta {
-  // variation.key
-  key?: string;
-  // variation.name
-  name?: string;
 }
 
 // Used for namespaces
@@ -74,7 +35,6 @@ type VariationRange = [number, number];
 
 export interface SDKPayloadInterface {
   organization: string;
-  project: string;
   environment: string;
   dateUpdated: Date;
   deployed: boolean;

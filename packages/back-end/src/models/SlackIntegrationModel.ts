@@ -4,13 +4,14 @@ import omit from "lodash/omit";
 import pick from "lodash/pick";
 import intersection from "lodash/intersection";
 import { z } from "zod";
-import { SlackIntegrationInterface } from "../../types/slack-integration";
+import { SlackIntegrationInterface } from "back-end/types/slack-integration";
 import {
   NotificationEventName,
-  notificationEventNames,
-} from "../events/base-types";
-import { logger } from "../util/logger";
-import { errorStringFromZodResult } from "../util/validation";
+  zodNotificationEventNamesEnum,
+} from "back-end/src/events/base-types";
+import { logger } from "back-end/src/util/logger";
+import { errorStringFromZodResult } from "back-end/src/util/validation";
+import { OrganizationInterface } from "back-end/types/organization";
 
 const slackIntegrationSchema = new mongoose.Schema({
   id: {
@@ -51,13 +52,13 @@ const slackIntegrationSchema = new mongoose.Schema({
     required: true,
     validate: {
       validator(value: unknown) {
-        const zodSchema = z.array(z.enum(notificationEventNames));
+        const zodSchema = z.array(z.enum(zodNotificationEventNamesEnum));
 
         const result = zodSchema.safeParse(value);
 
         if (!result.success) {
           const errorString = errorStringFromZodResult(result);
-          logger.error(errorString, "Invalid Event name");
+          logger.error({ error: errorString }, "Invalid Event name");
         }
 
         return result.success;
@@ -96,13 +97,13 @@ type SlackIntegrationDocument = mongoose.Document & SlackIntegrationInterface;
  * @returns
  */
 const toInterface = (
-  doc: SlackIntegrationDocument
+  doc: SlackIntegrationDocument,
 ): SlackIntegrationInterface =>
-  omit(doc.toJSON(), ["__v", "_id"]) as SlackIntegrationInterface;
+  omit(doc.toJSON<SlackIntegrationDocument>(), ["__v", "_id"]);
 
-const SlackIntegrationModel = mongoose.model<SlackIntegrationDocument>(
+const SlackIntegrationModel = mongoose.model<SlackIntegrationInterface>(
   "SlackIntegration",
-  slackIntegrationSchema
+  slackIntegrationSchema,
 );
 
 // region Create
@@ -161,7 +162,7 @@ export const createSlackIntegration = async ({
 // region Read
 
 export const getSlackIntegrations = async (
-  organizationId: string
+  organizationId: string,
 ): Promise<SlackIntegrationInterface[]> => {
   const docs = await SlackIntegrationModel.find({
     organizationId,
@@ -284,7 +285,7 @@ type UpdateAttributes = {
  */
 export const updateSlackIntegration = async (
   { slackIntegrationId, organizationId }: UpdateOptions,
-  updates: UpdateAttributes
+  updates: UpdateAttributes,
 ): Promise<boolean> => {
   const result = await SlackIntegrationModel.updateOne(
     { id: slackIntegrationId, organizationId },
@@ -303,10 +304,10 @@ export const updateSlackIntegration = async (
         ]),
         dateUpdated: new Date(),
       },
-    }
+    },
   );
 
-  return result.nModified === 1;
+  return result.modifiedCount === 1;
 };
 
 // endregion Update
@@ -335,6 +336,29 @@ export const deleteSlackIntegration = async ({
   return result.deletedCount === 1;
 };
 
+/**
+ * Deletes Slack integrations where the provided project is the only project for that Slack integration
+ * @param projectId
+ * @param organization
+ * @param user
+ */
+export const deleteAllSlackIntegrationsForAProject = async ({
+  projectId,
+  organization,
+}: {
+  projectId: string;
+  organization: OrganizationInterface;
+}): Promise<void> => {
+  const slackIntegrationsToDelete = await SlackIntegrationModel.find({
+    organization: organization.id,
+    projects: [projectId],
+  });
+
+  for (const slackIntegration of slackIntegrationsToDelete) {
+    await slackIntegration.delete();
+  }
+};
+
 type RemoveTagOptions = {
   organizationId: string;
   tag: string;
@@ -348,7 +372,7 @@ export const removeTagFromSlackIntegration = async ({
     { organizationId, tags: tag },
     {
       $pull: { tags: tag },
-    }
+    },
   );
 };
 
@@ -365,7 +389,7 @@ export const removeProjectFromSlackIntegration = async ({
     { organizationId, projects: projectId },
     {
       $pull: { projects: projectId },
-    }
+    },
   );
 };
 
@@ -382,7 +406,7 @@ export const removeEnvironmentFromSlackIntegration = async ({
     { organizationId, environments: envId },
     {
       $pull: { environments: envId },
-    }
+    },
   );
 };
 

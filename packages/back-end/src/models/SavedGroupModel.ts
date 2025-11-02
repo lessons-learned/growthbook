@@ -1,8 +1,18 @@
 import mongoose from "mongoose";
 import uniqid from "uniqid";
-import { ApiSavedGroup } from "../../types/openapi";
-import { SavedGroupInterface } from "../../types/saved-group";
-import { usingFileConfig } from "../init/config";
+import { SavedGroupInterface } from "shared/src/types";
+import { ApiSavedGroup } from "back-end/types/openapi";
+import {
+  CreateSavedGroupProps,
+  LegacySavedGroupInterface,
+  UpdateSavedGroupProps,
+} from "back-end/types/saved-group";
+import {
+  ToInterface,
+  getCollection,
+  removeMongooseFields,
+} from "back-end/src/util/mongo.util";
+import { migrateSavedGroup } from "back-end/src/util/migrations";
 
 const savedGroupSchema = new mongoose.Schema({
   id: {
@@ -18,25 +28,30 @@ const savedGroupSchema = new mongoose.Schema({
   dateCreated: Date,
   dateUpdated: Date,
   values: [String],
+  source: String,
+  condition: String,
+  type: {
+    type: String,
+  },
   attributeKey: String,
+  description: String,
+  projects: [String],
+  // Previously, empty saved groups were ignored in the SDK payload, making all $inGroup operations return true
+  useEmptyListGroup: Boolean,
 });
 
-type SavedGroupDocument = mongoose.Document & SavedGroupInterface;
-
-const SavedGroupModel = mongoose.model<SavedGroupDocument>(
+const SavedGroupModel = mongoose.model<LegacySavedGroupInterface>(
   "savedGroup",
-  savedGroupSchema
+  savedGroupSchema,
 );
 
-type CreateSavedGroupProps = Omit<
-  SavedGroupInterface,
-  "dateCreated" | "dateUpdated" | "id"
->;
+const COLLECTION = "savedgroups";
 
-type UpdateSavedGroupProps = Omit<
-  SavedGroupInterface,
-  "dateCreated" | "dateUpdated" | "id" | "organization" | "attributeKey"
->;
+const toInterface: ToInterface<SavedGroupInterface> = (doc) => {
+  const legacy = removeMongooseFields(doc);
+
+  return migrateSavedGroup(legacy);
+};
 
 export function parseSavedGroupString(list: string) {
   const values = list
@@ -48,62 +63,90 @@ export function parseSavedGroupString(list: string) {
 }
 
 export async function createSavedGroup(
-  group: CreateSavedGroupProps
+  organization: string,
+  group: CreateSavedGroupProps,
 ): Promise<SavedGroupInterface> {
   const newGroup = await SavedGroupModel.create({
     ...group,
     id: uniqid("grp_"),
+    organization,
     dateCreated: new Date(),
     dateUpdated: new Date(),
+    useEmptyListGroup: true,
   });
-  return newGroup.toJSON();
+  return toInterface(newGroup);
 }
 
 export async function getAllSavedGroups(
-  organization: string
+  organization: string,
 ): Promise<SavedGroupInterface[]> {
-  const savedGroups = await SavedGroupModel.find({ organization });
-  return savedGroups.map((value) => value.toJSON()) || [];
+  const savedGroups = await getCollection(COLLECTION)
+    .find({
+      organization,
+    })
+    .toArray();
+
+  return savedGroups.map(toInterface);
 }
 
 export async function getSavedGroupById(
   savedGroupId: string,
-  organization: string
+  organization: string,
 ): Promise<SavedGroupInterface | null> {
-  const savedGroup = await SavedGroupModel.findOne({
+  const savedGroup = await getCollection(COLLECTION).findOne({
     id: savedGroupId,
     organization: organization,
   });
 
-  return savedGroup?.toJSON() || null;
+  return savedGroup ? toInterface(savedGroup) : null;
+}
+
+export async function getSavedGroupsById(
+  savedGroupIds: string[],
+  organization: string,
+): Promise<SavedGroupInterface[]> {
+  const savedGroups = await getCollection(COLLECTION)
+    .find({
+      id: { $in: savedGroupIds || [] },
+      organization: organization,
+    })
+    .toArray();
+
+  return savedGroups ? savedGroups.map((group) => toInterface(group)) : [];
 }
 
 export async function updateSavedGroupById(
   savedGroupId: string,
   organization: string,
-  group: UpdateSavedGroupProps
+  group: UpdateSavedGroupProps,
 ): Promise<UpdateSavedGroupProps> {
   const changes = {
     ...group,
     dateUpdated: new Date(),
   };
 
-  await SavedGroupModel.update(
+  await SavedGroupModel.updateOne(
     {
       id: savedGroupId,
       organization: organization,
     },
-    changes
+    changes,
   );
 
   return changes;
 }
 
-export async function deleteSavedGroupById(id: string, organization: string) {
-  if (usingFileConfig()) {
-    throw new Error("Cannot delete. Saved Groups managed by config.yml");
-  }
+export async function removeProjectFromSavedGroups(
+  project: string,
+  organization: string,
+) {
+  await SavedGroupModel.updateMany(
+    { organization, projects: project },
+    { $pull: { projects: project } },
+  );
+}
 
+export async function deleteSavedGroupById(id: string, organization: string) {
   await SavedGroupModel.deleteOne({
     id,
     organization,
@@ -111,15 +154,19 @@ export async function deleteSavedGroupById(id: string, organization: string) {
 }
 
 export function toSavedGroupApiInterface(
-  savedGroup: SavedGroupInterface
+  savedGroup: SavedGroupInterface,
 ): ApiSavedGroup {
   return {
     id: savedGroup.id,
-    values: savedGroup.values,
+    type: savedGroup.type,
+    values: savedGroup.values || [],
+    condition: savedGroup.condition || "",
     name: savedGroup.groupName,
-    attributeKey: savedGroup.attributeKey,
+    attributeKey: savedGroup.attributeKey || "",
     dateCreated: savedGroup.dateCreated.toISOString(),
     dateUpdated: savedGroup.dateUpdated.toISOString(),
     owner: savedGroup.owner || "",
+    description: savedGroup.description,
+    projects: savedGroup.projects || [],
   };
 }

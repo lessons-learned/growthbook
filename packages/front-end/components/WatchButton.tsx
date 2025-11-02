@@ -1,18 +1,16 @@
 import { FC, useState } from "react";
 import { FaEye } from "react-icons/fa";
-import { useAuth } from "../services/auth";
-import { useWatching } from "../services/WatchProvider";
+import { useAuth } from "@/services/auth";
+import { useWatching } from "@/services/WatchProvider";
 
 const WatchButton: FC<{
   item: string;
   itemType: "feature" | "experiment";
   type?: "button" | "icon" | "link";
-}> = ({ item, itemType, type = "button" }) => {
-  const {
-    watchedExperiments,
-    watchedFeatures,
-    refreshWatching,
-  } = useWatching();
+  className?: string;
+}> = ({ item, itemType, type = "button", className }) => {
+  const { watchedExperiments, watchedFeatures, refreshWatching } =
+    useWatching();
   const { apiCall } = useAuth();
   const [loading, setLoading] = useState(false);
 
@@ -28,12 +26,16 @@ const WatchButton: FC<{
   let text = "";
   if (type === "button") {
     classNames += " btn btn-link";
-    text = isWatching ? "watching" : "watch";
+    text = isWatching ? "Watching" : "Watch";
   } else if (type === "link") {
-    text = isWatching ? "watching" : "watch";
+    text = isWatching ? "Watching" : "Watch";
   }
   if (loading) {
     classNames += " disabled";
+  }
+
+  if (className) {
+    classNames += " " + className;
   }
 
   return (
@@ -50,7 +52,7 @@ const WatchButton: FC<{
             `/user/${isWatching ? "unwatch" : "watch"}/${itemType}/${item}`,
             {
               method: "POST",
-            }
+            },
           );
           refreshWatching();
         } catch (e) {

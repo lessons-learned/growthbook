@@ -7,12 +7,20 @@ import { createPatch } from "diff";
 import { html } from "diff2html";
 import { DataSourceInterfaceWithParams } from "back-end/types/datasource";
 import cloneDeep from "lodash/cloneDeep";
+import {
+  MetricCappingSettings,
+  MetricWindowSettings,
+} from "back-end/types/fact-table";
+import {
+  DEFAULT_METRIC_WINDOW_DELAY_HOURS,
+  DEFAULT_METRIC_WINDOW_HOURS,
+} from "shared/constants";
 import { useAuth } from "@/services/auth";
 import { useConfigJson } from "@/services/config";
 import { useDefinitions } from "@/services/DefinitionsContext";
-import Field from "../Forms/Field";
-import Page from "../Modal/Page";
-import PagedModal from "../Modal/PagedModal";
+import Field from "@/components/Forms/Field";
+import Page from "@/components/Modal/Page";
+import PagedModal from "@/components/Modal/PagedModal";
 import UploadConfigYml from "./UploadConfigYml";
 
 function sanitizeSecrets(d: DataSourceInterfaceWithParams) {
@@ -41,13 +49,8 @@ export default function RestoreConfigYamlButton({
   settings?: OrganizationSettings;
   mutate: () => void;
 }) {
-  const {
-    datasources,
-    metrics,
-    dimensions,
-    mutateDefinitions,
-    segments,
-  } = useDefinitions();
+  const { datasources, metrics, dimensions, mutateDefinitions, segments } =
+    useDefinitions();
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
@@ -72,7 +75,7 @@ export default function RestoreConfigYamlButton({
 
   function parseConfig(json) {
     try {
-      // Only include relevent objects in original value
+      // Only include relevant objects in original value
       // Merge original value to new value to backfill missing properties
       const origConfig = cloneDeep(config);
       const newConfig = cloneDeep(json);
@@ -112,6 +115,53 @@ export default function RestoreConfigYamlButton({
             const o = origConfig.metrics[k];
             const n = newConfig.metrics[k];
 
+            // Error for deprecated fields
+            if (n.cap) {
+              throw new Error(`
+                \`cap\` is a deprecated field in metric definitions.
+                Instead use \`cappingSettings\` with sub properties 
+                \`capping: 'absolute'\` and \`value: ${n.cap}\``);
+            }
+            // backwards compatibility for settings
+            if ((n.capping || n.capValue) && n.cappingSettings === undefined) {
+              const cappingSetting: MetricCappingSettings = {
+                type: n.capping ?? "absolute",
+                value: n.capValue ?? 0,
+              };
+              n.cappingSettings = cappingSetting;
+              delete n.capping;
+              delete n.capValue;
+            }
+            if (
+              (n.conversionDelayHours || n.conversionWindowHours) &&
+              n.windowSettings === undefined
+            ) {
+              const windowSetting: MetricWindowSettings = {
+                type: "conversion",
+                delayValue:
+                  n.conversionDelayHours ?? DEFAULT_METRIC_WINDOW_DELAY_HOURS,
+                delayUnit: "hours",
+                windowValue:
+                  n.conversionWindowHours ?? DEFAULT_METRIC_WINDOW_HOURS,
+                windowUnit: "hours",
+              };
+              n.windowSettings = windowSetting;
+              delete n.conversionWindowDelay;
+              delete n.conversionDelayHours;
+            } else if (n.windowSettings.delayValue === undefined) {
+              const windowSettings: MetricWindowSettings = {
+                ...n.windowSettings,
+                delayValue: n.windowSettings.delayHours ?? 0,
+                delayUnit: n.windowSettings.delayUnit ?? "hours",
+              };
+              n.windowSettings = windowSettings;
+              delete n.windowSettings.delayHours;
+            }
+            if (n.userIdType || n.anonymousIdType) {
+              throw new Error(`
+                \`userIdType\` and \`anonymousIdType\` have been deprecated. 
+                Please use \`userIdTypes\` instead.`);
+            }
             newConfig.metrics[k] = {
               ...o,
               ...n,
@@ -160,7 +210,7 @@ export default function RestoreConfigYamlButton({
         Object.keys(origConfig.datasources).forEach((k) => {
           sanitizeSecrets(
             // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-            origConfig.datasources[k] as DataSourceInterfaceWithParams
+            origConfig.datasources[k] as DataSourceInterfaceWithParams,
           );
         });
       }
@@ -176,7 +226,7 @@ export default function RestoreConfigYamlButton({
         dump(newConfig, { skipInvalid: true }),
         "",
         "",
-        { context: 10 }
+        { context: 10 },
       );
 
       setDiffHTML(html(patch, {}));
@@ -190,6 +240,7 @@ export default function RestoreConfigYamlButton({
     <div>
       {open && (
         <PagedModal
+          trackingEventModalType="import-settings-config-yaml"
           close={() => setOpen(false)}
           header="Import from config.yml"
           step={step}
@@ -213,6 +264,7 @@ export default function RestoreConfigYamlButton({
         >
           <Page
             display="Select File"
+            enabled
             validate={async () => {
               const { config } = form.getValues();
               const json = load(config);

@@ -1,63 +1,106 @@
+import cloneDeep from "lodash/cloneDeep";
 import {
+  getConversionWindowHours,
+  getDelayWindowHours,
+} from "shared/experiments";
+import { ReqContext } from "back-end/types/organization";
+import {
+  DataSourceInterface,
   DataSourceProperties,
-  DataSourceSettings,
-  DataSourceType,
-} from "../../types/datasource";
-import { DimensionInterface } from "../../types/dimension";
-import { ExperimentInterface, ExperimentPhase } from "../../types/experiment";
-import { MixpanelConnectionParams } from "../../types/integrations/mixpanel";
-import { MetricInterface, MetricType } from "../../types/metric";
-import { decryptDataSourceParams } from "../services/datasource";
-import { formatQuery, runQuery } from "../services/mixpanel";
+} from "back-end/types/datasource";
+import { DimensionInterface } from "back-end/types/dimension";
+import { MixpanelConnectionParams } from "back-end/types/integrations/mixpanel";
+import { MetricInterface, MetricType } from "back-end/types/metric";
+import { decryptDataSourceParams } from "back-end/src/services/datasource";
+import { formatQuery, runQuery } from "back-end/src/services/mixpanel";
 import {
+  DimensionSlicesQueryResponse,
+  DropTableQueryResponse,
+  ExperimentAggregateUnitsQueryResponse,
   ExperimentMetricQueryResponse,
   ExperimentQueryResponses,
+  ExperimentUnitsQueryResponse,
+  MetricAnalysisQueryResponse,
   MetricValueParams,
   MetricValueQueryResponse,
   MetricValueQueryResponseRow,
-  PastExperimentResponse,
+  MetricValueQueryResponseRows,
+  PastExperimentQueryResponse,
   SourceIntegrationInterface,
-} from "../types/Integration";
-import { DEFAULT_CONVERSION_WINDOW_HOURS } from "../util/secrets";
+  UserExperimentExposuresQueryResponse,
+} from "back-end/src/types/Integration";
 import {
   conditionToJavascript,
   getAggregateFunctions,
   getMixpanelPropertyColumn,
-} from "../util/mixpanel";
-import { replaceSQLVars } from "../util/sql";
+} from "back-end/src/util/mixpanel";
+import { compileSqlTemplate } from "back-end/src/util/sql";
+import { ExperimentSnapshotSettings } from "back-end/types/experiment-snapshot";
+import { applyMetricOverrides } from "back-end/src/util/integration";
 
 export default class Mixpanel implements SourceIntegrationInterface {
-  type!: DataSourceType;
-  datasource!: string;
+  context: ReqContext;
+  datasource: DataSourceInterface;
   params: MixpanelConnectionParams;
-  organization!: string;
-  settings: DataSourceSettings;
-  decryptionError!: boolean;
-  constructor(encryptedParams: string, settings: DataSourceSettings) {
+  decryptionError: boolean;
+  constructor(context: ReqContext, datasource: DataSourceInterface) {
+    this.context = context;
+    this.datasource = datasource;
+
+    // Default settings
+    this.datasource.settings.events = {
+      experimentEvent: "$experiment_started",
+      experimentIdProperty: "Experiment name",
+      variationIdProperty: "Variant name",
+      ...this.datasource.settings.events,
+    };
+
+    this.decryptionError = false;
     try {
       this.params = decryptDataSourceParams<MixpanelConnectionParams>(
-        encryptedParams
+        datasource.params,
       );
     } catch (e) {
       this.params = { projectId: "", secret: "", username: "" };
       this.decryptionError = true;
     }
-    this.settings = {
-      events: {
-        experimentEvent: "$experiment_started",
-        experimentIdProperty: "Experiment name",
-        variationIdProperty: "Variant name",
-        ...settings.events,
-      },
-    };
+  }
+  getMetricAnalysisQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  runMetricAnalysisQuery(): Promise<MetricAnalysisQueryResponse> {
+    throw new Error("Method not implemented.");
+  }
+  getDropUnitsTableQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  runDropTableQuery(): Promise<DropTableQueryResponse> {
+    throw new Error("Method not implemented.");
   }
   getExperimentMetricQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  getExperimentAggregateUnitsQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  runExperimentAggregateUnitsQuery(): Promise<ExperimentAggregateUnitsQueryResponse> {
     throw new Error("Method not implemented.");
   }
   runExperimentMetricQuery(): Promise<ExperimentMetricQueryResponse> {
     throw new Error("Method not implemented.");
   }
-
+  getExperimentUnitsTableQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  runExperimentUnitsQuery(): Promise<ExperimentUnitsQueryResponse> {
+    throw new Error("Method not implemented.");
+  }
+  getUserExperimentExposuresQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  runUserExperimentExposuresQuery(): Promise<UserExperimentExposuresQueryResponse> {
+    throw new Error("Method not implemented.");
+  }
   private getMetricAggregationExpression(metric: MetricInterface) {
     if (metric.aggregation) {
       return `${metric.aggregation}`;
@@ -77,24 +120,31 @@ export default class Mixpanel implements SourceIntegrationInterface {
     ${destVar} = !${destVar}.length ? 0 : (
       (values => ${this.getMetricAggregationExpression(metric)})(${destVar})
     );${
-      metric.cap && metric.cap > 0
-        ? `\n${destVar} = ${destVar} && Math.min(${destVar}, ${metric.cap});`
+      metric.cappingSettings.type === "absolute" && metric.cappingSettings.value
+        ? `\n${destVar} = ${destVar} && Math.min(${destVar}, ${metric.cappingSettings.value});`
         : ""
     }
     `;
   }
 
   getExperimentResultsQuery(
-    experiment: ExperimentInterface,
-    phase: ExperimentPhase,
-    metrics: MetricInterface[],
-    activationMetric: MetricInterface,
-    dimension: DimensionInterface
+    snapshotSettings: ExperimentSnapshotSettings,
+    metricDocs: MetricInterface[],
+    activationMetricDoc: MetricInterface,
+    dimension: DimensionInterface,
   ): string {
+    const activationMetric = cloneDeep<MetricInterface>(activationMetricDoc);
+    applyMetricOverrides(activationMetric, snapshotSettings);
+
+    const metrics = metricDocs.map((m) => {
+      const mCopy = cloneDeep<MetricInterface>(m);
+      applyMetricOverrides(mCopy, snapshotSettings);
+      return mCopy;
+    });
+
     const hasEarlyStartMetrics =
-      metrics.filter(
-        (m) => m.conversionDelayHours && m.conversionDelayHours < 0
-      ).length > 0;
+      metrics.filter((m) => getDelayWindowHours(m.windowSettings) < 0).length >
+      0;
 
     const onActivate = `
         ${activationMetric ? "state.activated = true;" : ""}
@@ -104,14 +154,14 @@ export default class Mixpanel implements SourceIntegrationInterface {
             ? ` // Process queued values
         state.queuedEvents.forEach((event) => {
           ${metrics
-            .filter((m) => m.conversionDelayHours && m.conversionDelayHours < 0)
+            .filter((m) => getDelayWindowHours(m.windowSettings) < 0)
             .map(
               (metric, i) => `// Metric - ${metric.name}
           if(isMetric${i}(event) && event.time - state.start > ${
-                (metric.conversionDelayHours || 0) * 60 * 60 * 1000
-              }) {
+            getDelayWindowHours(metric.windowSettings) * 60 * 60 * 1000
+          }) {
             state.m${i}.push(${this.getMetricValueExpression(metric.column)});
-          }`
+          }`,
             )
             .join("\n")}
         });
@@ -123,9 +173,9 @@ export default class Mixpanel implements SourceIntegrationInterface {
         // Experiment exposure event
         function isExposureEvent(event) {
           return ${this.getValidExperimentCondition(
-            experiment.trackingKey,
-            phase.dateStarted,
-            phase.dateEnded
+            snapshotSettings.experimentId,
+            snapshotSettings.startDate,
+            snapshotSettings.endDate,
           )};
         }
         ${
@@ -138,13 +188,13 @@ export default class Mixpanel implements SourceIntegrationInterface {
           .join("")}
 
         return ${this.getEvents(
-          phase.dateStarted,
-          phase.dateEnded || new Date(),
+          snapshotSettings.startDate,
+          snapshotSettings.endDate,
           [
             ...metrics.map((m) => m.table),
             activationMetric?.table,
             this.getExperimentEventName(),
-          ]
+          ],
         )}
         .filter(function(event) {
           // Experiment exposure event
@@ -158,7 +208,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
           ${metrics
             .map(
               (metric, i) => `// ${metric.name}
-          if(isMetric${i}(event)) return true;`
+          if(isMetric${i}(event)) return true;`,
             )
             .join("\n")}
           // Otherwise, ignore the event
@@ -174,8 +224,8 @@ export default class Mixpanel implements SourceIntegrationInterface {
             start: null,
             variation: null,
             ${metrics.map((m, i) => `m${i}: [],`).join("\n")} ${
-      hasEarlyStartMetrics ? "\nqueuedEvents: []" : ""
-    }
+              hasEarlyStartMetrics ? "\nqueuedEvents: []" : ""
+            }
           };
           for(var i=0; i<events.length; i++) {
             const event = events[i];
@@ -184,15 +234,16 @@ export default class Mixpanel implements SourceIntegrationInterface {
               if(!state.inExperiment) {
                 state.inExperiment = true;
                 state.variation = ${getMixpanelPropertyColumn(
-                  this.settings.events?.variationIdProperty || "Variant name"
+                  this.datasource.settings.events?.variationIdProperty ||
+                    "Variant name",
                 )};
                 ${
                   dimension
                     ? `state.dimension = (${this.getDimensionColumn(
                         dimension.sql,
-                        phase.dateStarted,
-                        phase.dateEnded,
-                        experiment.trackingKey
+                        snapshotSettings.startDate,
+                        snapshotSettings.endDate,
+                        snapshotSettings.experimentId,
                       )}) || null;`
                     : ""
                 }
@@ -200,7 +251,8 @@ export default class Mixpanel implements SourceIntegrationInterface {
                 continue;
               }
               else if(state.variation !== ${getMixpanelPropertyColumn(
-                this.settings.events?.variationIdProperty || "Variant name"
+                this.datasource.settings.events?.variationIdProperty ||
+                  "Variant name",
               )}) {
                 state.multipleVariants = true;
                 continue;
@@ -244,18 +296,26 @@ export default class Mixpanel implements SourceIntegrationInterface {
             }
 
             ${metrics
-              .map(
-                (metric, i) => `// Metric - ${metric.name}
-              if(isMetric${i}(event) && ${this.getConversionWindowCondition(
-                  metric,
-                  "state.start"
-                )}) {
-                state.m${i}.push(${this.getMetricValueExpression(
-                  metric.column
-                )});
-              }
-            `
-              )
+              .map((metric, i) => {
+                const conversionWindowCondition =
+                  this.getConversionWindowCondition(
+                    metric,
+                    snapshotSettings.endDate,
+                    "state.start",
+                  );
+
+                return `// Metric - ${metric.name}
+                    if(isMetric${i}(event) ${
+                      conversionWindowCondition
+                        ? `&& ${conversionWindowCondition}`
+                        : ""
+                    }) {
+                      state.m${i}.push(${this.getMetricValueExpression(
+                        metric.column,
+                      )});
+                    }
+                  `;
+              })
               .join("")}
           }
           return state;
@@ -272,7 +332,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
         .map(function(user) {
           ${metrics
             .map((metric, i) =>
-              this.aggregateMetricValues(metric, `user.value.m${i}`)
+              this.aggregateMetricValues(metric, `user.value.m${i}`),
             )
             .join("\n")}
 
@@ -287,7 +347,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
           ${metrics
             .map(
               (metric, i) => `// Metric - ${metric.name}
-          mixpanel.reducer.numeric_summary('value.m${i}'),`
+          mixpanel.reducer.numeric_summary('value.m${i}'),`,
             )
             .join("\n")}
         ])
@@ -304,7 +364,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
               .map(
                 (m) => `
               // ${m.name}
-              ${JSON.stringify(m.id)}`
+              ${JSON.stringify(m.id)}`,
               )
               .join(",")}
           ];
@@ -327,18 +387,16 @@ export default class Mixpanel implements SourceIntegrationInterface {
     return query;
   }
   async getExperimentResults(
-    experiment: ExperimentInterface,
-    phase: ExperimentPhase,
+    snapshotSettings: ExperimentSnapshotSettings,
     metrics: MetricInterface[],
     activationMetric: MetricInterface,
-    dimension: DimensionInterface
+    dimension: DimensionInterface,
   ): Promise<ExperimentQueryResponses> {
     const query = this.getExperimentResultsQuery(
-      experiment,
-      phase,
+      snapshotSettings,
       metrics,
       activationMetric,
-      dimension
+      dimension,
     );
 
     const result = await runQuery<
@@ -424,7 +482,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
             const event = events[i];
             if(isMetric(event)) {
               state.metricValue.push(${this.getMetricValueExpression(
-                metric.column
+                metric.column,
               )});
             }
           }
@@ -500,11 +558,11 @@ export default class Mixpanel implements SourceIntegrationInterface {
               sum: number | null;
               sum_squares: number | null;
             }
-        )[]
+        )[],
       ]
     >(this.params, query);
 
-    const result: MetricValueQueryResponse = [];
+    const result: MetricValueQueryResponseRows = [];
     const overall: MetricValueQueryResponseRow = {
       date: "",
       count: 0,
@@ -532,12 +590,18 @@ export default class Mixpanel implements SourceIntegrationInterface {
         }
       });
 
-    return [overall, ...result];
+    return { rows: [overall, ...result] };
   }
   getPastExperimentQuery(): string {
     throw new Error("Method not implemented.");
   }
-  async runPastExperimentQuery(): Promise<PastExperimentResponse> {
+  async runPastExperimentQuery(): Promise<PastExperimentQueryResponse> {
+    throw new Error("Method not implemented.");
+  }
+  getDimensionSlicesQuery(): string {
+    throw new Error("Method not implemented.");
+  }
+  async runDimensionSlicesQuery(): Promise<DimensionSlicesQueryResponse> {
     throw new Error("Method not implemented.");
   }
   getSensitiveParamKeys(): string[] {
@@ -577,8 +641,12 @@ function is${name}(event) {
   }
 
   private getGroupByUserFields() {
-    if (this.settings?.events?.extraUserIdProperty) {
-      return JSON.stringify([this.settings?.events?.extraUserIdProperty]) + ",";
+    if (this.datasource.settings?.events?.extraUserIdProperty) {
+      return (
+        JSON.stringify([
+          this.datasource.settings?.events?.extraUserIdProperty,
+        ]) + ","
+      );
     }
     return "";
   }
@@ -606,9 +674,9 @@ function is${name}(event) {
     col: string,
     startDate: Date,
     endDate?: Date,
-    experimentId?: string
+    experimentId?: string,
   ) {
-    return replaceSQLVars(getMixpanelPropertyColumn(col), {
+    return compileSqlTemplate(getMixpanelPropertyColumn(col), {
       startDate,
       endDate,
       experimentId,
@@ -617,21 +685,29 @@ function is${name}(event) {
 
   private getConversionWindowCondition(
     metric: MetricInterface,
-    conversionWindowStart: string = ""
+    experimentEnd: Date,
+    conversionWindowStart: string = "",
   ) {
+    const windowHours = getConversionWindowHours(metric.windowSettings);
     const checks: string[] = [];
-    const start = (metric.conversionDelayHours || 0) * 60 * 60 * 1000;
-    const end =
-      start +
-      (metric.conversionWindowHours || DEFAULT_CONVERSION_WINDOW_HOURS) *
-        60 *
-        60 *
-        1000;
+    const start = getDelayWindowHours(metric.windowSettings) * 60 * 60 * 1000;
+    // add conversion delay
     if (start) {
       checks.push(`event.time - ${conversionWindowStart} >= ${start}`);
     }
-    checks.push(`event.time - ${conversionWindowStart} < ${end}`);
-    return checks.join(" && ");
+    // if conversion window, add conversion end
+    if (metric.windowSettings.type === "conversion") {
+      const end = start + windowHours * 60 * 60 * 1000;
+      checks.push(`event.time - ${conversionWindowStart} < ${end}`);
+    }
+    // if lookback window, add additional lookback start
+    if (metric.windowSettings.type === "lookback") {
+      const lookbackLength = windowHours * 60 * 60 * 1000;
+      checks.push(
+        `${experimentEnd.getTime()} - event.time <= ${lookbackLength}`,
+      );
+    }
+    return checks.length ? checks.join(" && ") : "";
   }
 
   private getValidMetricCondition(metric: MetricInterface) {
@@ -653,12 +729,15 @@ function is${name}(event) {
     return checks.join(" && ");
   }
   private getExperimentEventName() {
-    return this.settings.events?.experimentEvent || "$experiment_started";
+    return (
+      this.datasource.settings.events?.experimentEvent || "$experiment_started"
+    );
   }
   private getValidExperimentCondition(id: string, start: Date, end?: Date) {
     const experimentEvent = this.getExperimentEventName();
     const experimentIdCol = getMixpanelPropertyColumn(
-      this.settings.events?.experimentIdProperty || "Experiment name"
+      this.datasource.settings.events?.experimentIdProperty ||
+        "Experiment name",
     );
     let timeCheck = `event.time >= ${start.getTime()}`;
     if (end) {

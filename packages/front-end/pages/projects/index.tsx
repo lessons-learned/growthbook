@@ -1,20 +1,20 @@
 import React, { useState, FC } from "react";
-import {
-  FaExclamationTriangle,
-  FaFolderPlus,
-  FaPencilAlt,
-} from "react-icons/fa";
+import { FaExclamationTriangle } from "react-icons/fa";
 import { ProjectInterface } from "back-end/types/project";
 import { useRouter } from "next/router";
 import Link from "next/link";
-import { date } from "shared";
-import usePermissions from "@/hooks/usePermissions";
+import { date } from "shared/dates";
 import DeleteButton from "@/components/DeleteButton/DeleteButton";
 import ProjectModal from "@/components/Projects/ProjectModal";
 import { useAuth } from "@/services/auth";
 import { useDefinitions } from "@/services/DefinitionsContext";
 import MoreMenu from "@/components/Dropdown/MoreMenu";
 import useSDKConnections from "@/hooks/useSDKConnections";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import Tooltip from "@/components/Tooltip/Tooltip";
+import Button from "@/ui/Button";
+import Badge from "@/ui/Badge";
+import { capitalizeFirstLetter } from "@/services/utils";
 
 const ProjectsPage: FC = () => {
   const { projects, mutateDefinitions } = useDefinitions();
@@ -23,20 +23,13 @@ const ProjectsPage: FC = () => {
   const { apiCall } = useAuth();
 
   const [modalOpen, setModalOpen] = useState<Partial<ProjectInterface> | null>(
-    null
+    null,
   );
 
   const { data: sdkConnectionsData } = useSDKConnections();
 
-  const permissions = usePermissions();
-  const manageProjectsPermissions: { [id: string]: boolean } = {};
-  projects.forEach(
-    (p) =>
-      (manageProjectsPermissions[p.id] = permissions.check(
-        "manageProjects",
-        p.id
-      ))
-  );
+  const permissionsUtil = usePermissionsUtil();
+  const canCreateProjects = permissionsUtil.canCreateProjects();
 
   return (
     <div className="container-fluid  pagecontents">
@@ -48,25 +41,27 @@ const ProjectsPage: FC = () => {
         />
       )}
 
-      <div className="filters md-form row mb-3 align-items-center">
+      <div className="filters md-form row mb-1 align-items-center">
         <div className="col-auto d-flex">
-          <h1>Projects</h1>
+          <h1 className="mb-0">Projects</h1>
         </div>
         <div style={{ flex: 1 }} />
         <div className="col-auto">
-          <button
-            className="btn btn-primary"
-            onClick={(e) => {
-              e.preventDefault();
-              setModalOpen({});
-            }}
+          <Tooltip
+            body="You don't have permission to create projects"
+            shouldDisplay={!canCreateProjects}
           >
-            <FaFolderPlus /> Create Project
-          </button>
+            <Button
+              disabled={!canCreateProjects}
+              onClick={() => setModalOpen({})}
+            >
+              Create Project
+            </Button>
+          </Tooltip>
         </div>
       </div>
 
-      <p>
+      <p className="text-gray mb-3">
         Group your ideas and experiments into <strong>Projects</strong> to keep
         things organized and easy to manage.
       </p>
@@ -84,30 +79,42 @@ const ProjectsPage: FC = () => {
           </thead>
           <tbody>
             {projects.map((p) => {
-              const canManage = manageProjectsPermissions[p.id];
+              const canEdit = permissionsUtil.canUpdateProject(p.id);
+              const canDelete =
+                // If the project has the `managedBy` property, we block deletion.
+                permissionsUtil.canDeleteProject(p.id) && !p.managedBy?.type;
               return (
                 <tr
                   key={p.id}
-                  // @ts-expect-error TS(2322) If you come across this, please fix it!: Type '((e: MouseEvent<HTMLTableRowElement, MouseEv... Remove this comment to see the full error message
                   onClick={
-                    canManage
-                      ? (e) => {
-                          e.preventDefault();
+                    canEdit
+                      ? () => {
                           router.push(`/project/${p.id}`);
                         }
-                      : null
+                      : undefined
                   }
-                  // @ts-expect-error TS(2322) If you come across this, please fix it!: Type '{ cursor: "pointer"; } | null' is not assign... Remove this comment to see the full error message
-                  style={canManage ? { cursor: "pointer" } : null}
+                  style={canEdit ? { cursor: "pointer" } : {}}
                 >
                   <td>
-                    {canManage ? (
-                      <Link href={`/project/${p.id}`}>
-                        <a className="font-weight-bold">{p.name}</a>
+                    {canEdit ? (
+                      <Link
+                        href={`/project/${p.id}`}
+                        className="font-weight-bold"
+                      >
+                        {p.name}
                       </Link>
                     ) : (
                       <span className="font-weight-bold">{p.name}</span>
                     )}
+                    {p.managedBy?.type ? (
+                      <div>
+                        <Badge
+                          label={`Managed by ${capitalizeFirstLetter(
+                            p.managedBy.type,
+                          )}`}
+                        />
+                      </div>
+                    ) : null}
                   </td>
                   <td className="pr-5 text-gray" style={{ fontSize: 12 }}>
                     {p.description}
@@ -119,35 +126,34 @@ const ProjectsPage: FC = () => {
                     style={{ cursor: "initial" }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      e.preventDefault();
                     }}
                   >
-                    {canManage && (
-                      <MoreMenu>
+                    <MoreMenu>
+                      {canEdit ? (
                         <button
-                          className="btn dropdown-item py-2"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
+                          className="btn dropdown-item"
+                          onClick={() => {
                             setModalOpen(p);
                           }}
                         >
-                          <FaPencilAlt /> Edit
+                          Edit
                         </button>
+                      ) : null}
+                      {canDelete ? (
                         <DeleteButton
-                          className="btn dropdown-item py-2"
+                          className="dropdown-item text-danger"
                           displayName="project"
                           text="Delete"
+                          useIcon={false}
                           onClick={async () => {
                             await apiCall(`/projects/${p.id}`, {
                               method: "DELETE",
                             });
                             mutateDefinitions();
                           }}
-                          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'Element | null' is not assignable to type 's... Remove this comment to see the full error message
                           additionalMessage={
-                            sdkConnectionsData?.connections?.find(
-                              (c) => c.project === p.id
+                            sdkConnectionsData?.connections?.find((c) =>
+                              c.projects.includes(p.id),
                             ) ? (
                               <div className="alert alert-danger px-2 py-1">
                                 <FaExclamationTriangle /> This project is in use
@@ -157,8 +163,8 @@ const ProjectsPage: FC = () => {
                             ) : null
                           }
                         />
-                      </MoreMenu>
-                    )}
+                      ) : null}
+                    </MoreMenu>
                   </td>
                 </tr>
               );
@@ -166,7 +172,7 @@ const ProjectsPage: FC = () => {
           </tbody>
         </table>
       ) : (
-        <p>Click the button below to create your first project!</p>
+        <p>Click the button in the top right to create your first project!</p>
       )}
     </div>
   );

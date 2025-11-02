@@ -1,18 +1,22 @@
-import { decryptDataSourceParams } from "../services/datasource";
-import { runAthenaQuery } from "../services/athena";
-import { AthenaConnectionParams } from "../../types/integrations/athena";
-import { FormatDialect } from "../util/sql";
-import { MissingDatasourceParamsError } from "../types/Integration";
+import { FormatDialect } from "shared/src/types";
+import { decryptDataSourceParams } from "back-end/src/services/datasource";
+import {
+  cancelAthenaQuery,
+  runAthenaQuery,
+} from "back-end/src/services/athena";
+import {
+  ExternalIdCallback,
+  QueryResponse,
+} from "back-end/src/types/Integration";
+import { AthenaConnectionParams } from "back-end/types/integrations/athena";
 import SqlIntegration from "./SqlIntegration";
 
 export default class Athena extends SqlIntegration {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
-  params: AthenaConnectionParams;
+  params!: AthenaConnectionParams;
+  requiresSchema = false;
   setParams(encryptedParams: string) {
-    this.params = decryptDataSourceParams<AthenaConnectionParams>(
-      encryptedParams
-    );
+    this.params =
+      decryptDataSourceParams<AthenaConnectionParams>(encryptedParams);
   }
   getFormatDialect(): FormatDialect {
     return "trino";
@@ -23,14 +27,20 @@ export default class Athena extends SqlIntegration {
   toTimestamp(date: Date) {
     return `from_iso8601_timestamp('${date.toISOString()}')`;
   }
-  runQuery(sql: string) {
-    return runAthenaQuery(this.params, sql);
+  runQuery(
+    sql: string,
+    setExternalId: ExternalIdCallback,
+  ): Promise<QueryResponse> {
+    return runAthenaQuery(this.params, sql, setExternalId);
+  }
+  async cancelQuery(externalId: string): Promise<void> {
+    await cancelAthenaQuery(this.params, externalId);
   }
   addTime(
     col: string,
     unit: "hour" | "minute",
     sign: "+" | "-",
-    amount: number
+    amount: number,
   ): string {
     return `${col} ${sign} INTERVAL '${amount}' ${unit}`;
   }
@@ -43,20 +53,22 @@ export default class Athena extends SqlIntegration {
   dateDiff(startCol: string, endCol: string) {
     return `date_diff('day', ${startCol}, ${endCol})`;
   }
-  useAliasInGroupBy(): boolean {
-    return false;
-  }
   ensureFloat(col: string): string {
-    return `1.0*${col}`;
+    return `CAST(${col} AS double)`;
   }
-  getInformationSchemaFromClause(): string {
-    if (!this.params.catalog)
-      throw new MissingDatasourceParamsError(
-        "To view the information schema for an Athena data source, you must define a default catalog. Please add a default catalog by editing the datasource's connection settings."
-      );
-    return `${this.params.catalog}.information_schema.columns`;
+  hasCountDistinctHLL(): boolean {
+    return true;
   }
-  getInformationSchemaTableFromClause(databaseName: string): string {
-    return `${databaseName}.information_schema.columns`;
+  hllAggregate(col: string): string {
+    return `APPROX_SET(${col})`;
+  }
+  hllReaggregate(col: string): string {
+    return `MERGE(${col})`;
+  }
+  hllCardinality(col: string): string {
+    return `CARDINALITY(${col})`;
+  }
+  getDefaultDatabase() {
+    return this.params.catalog || "";
   }
 }

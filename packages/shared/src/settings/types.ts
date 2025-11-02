@@ -12,10 +12,13 @@ import {
   ExperimentUpdateSchedule,
   MemberRoleInfo,
   OrganizationInterface,
+  RequireReview,
 } from "back-end/types/organization";
-import { StatsEngine } from "back-end/types/stats";
+import { StatsEngine, PValueCorrection } from "back-end/types/stats";
 import { ProjectInterface } from "back-end/types/project";
 import { ReportInterface } from "back-end/types/report";
+import { MetricWindowSettings } from "back-end/types/fact-table";
+import { ExperimentMetricInterface } from "../experiments";
 
 interface SettingMetadata {
   scopeApplied?: keyof ScopeDefinition | "organization";
@@ -40,23 +43,24 @@ export interface ScopeDefinition {
   project?: ProjectInterface;
   datasource?: DataSourceInterface;
   experiment?: ExperimentInterface | ExperimentInterfaceStringDates;
-  metric?: MetricInterface;
+  metric?: ExperimentMetricInterface;
   denominatorMetric?: MetricInterface;
   report?: ReportInterface;
 }
 
-export type ScopeSettingsFn = (
-  scopes: ScopeDefinition
-) => {
+export type ScopeSettingsFn = (scopes: ScopeDefinition) => {
   settings: ScopedSettings;
   scopeSettings: ScopeSettingsFn;
 };
 
 interface MetricSettings {
-  conversionWindowHours: number | null;
-  conversionDelayHours: number | null;
-  winRisk: number | null;
-  loseRisk: number | null;
+  windowType: MetricWindowSettings["type"];
+  windowHours: number;
+  delayHours: number;
+
+  winRisk: number;
+  loseRisk: number;
+  targetMDE: number;
 }
 
 interface BaseSettings {
@@ -72,9 +76,26 @@ interface BaseSettings {
   defaultRole: MemberRoleInfo;
   statsEngine: StatsEngine;
   pValueThreshold: number;
+  pValueCorrection: PValueCorrection;
   regressionAdjustmentEnabled: boolean;
   regressionAdjustmentDays: number;
+  sequentialTestingEnabled: boolean;
+  sequentialTestingTuningParameter: number;
   attributionModel: AttributionModel;
+  srmThreshold: number;
+  secureAttributeSalt: string;
+  killswitchConfirmation: boolean;
+  requireReviews: boolean | RequireReview[];
+  featureKeyExample: string;
+  featureRegexValidator: string;
+  banditScheduleValue: number;
+  banditScheduleUnit: "hours" | "days";
+  banditBurnInValue: number;
+  banditBurnInUnit: "hours" | "days";
+  experimentMinLengthDays: number;
+  experimentMaxLengthDays: number | undefined;
+  maxMetricSliceLevels: number;
+  useStickyBucketing: boolean;
 }
 
 // todo: encapsulate all settings, including experiment

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import LoadingSpinner from "../LoadingSpinner";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function PendingInformationSchemaCard({
   mutate,
@@ -15,7 +15,7 @@ export default function PendingInformationSchemaCard({
       if (retryCount > 8) {
         setFetching(false);
         setError(
-          "This query is taking quite a while. We're building this in the background. Feel free to leave this page and check back in a few minutes."
+          "This query is taking quite a while. We're building this in the background. Feel free to leave this page and check back in a few minutes.",
         );
         setRetryCount(1);
       } else {

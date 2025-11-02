@@ -5,29 +5,20 @@ import {
   DataSourceInterfaceWithParams,
 } from "back-end/types/datasource";
 import cloneDeep from "lodash/cloneDeep";
-import { checkDatasourceProjectPermissions } from "@/services/datasources";
-import usePermissions from "@/hooks/usePermissions";
 import { DataSourceQueryEditingModalBaseProps } from "@/components/Settings/EditDataSource/types";
 import { DataSourceEditExperimentEventPropertiesModal } from "@/components/Settings/EditDataSource/DataSourceExperimentProperties/DataSourceEditExperimentEventPropertiesModal";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
 
-type DataSourceViewEditExperimentPropertiesProps = DataSourceQueryEditingModalBaseProps;
+type DataSourceViewEditExperimentPropertiesProps =
+  DataSourceQueryEditingModalBaseProps;
 
-export const DataSourceViewEditExperimentProperties: FC<DataSourceViewEditExperimentPropertiesProps> = ({
-  onSave,
-  onCancel,
-  dataSource,
-  canEdit = true,
-}) => {
+export const DataSourceViewEditExperimentProperties: FC<
+  DataSourceViewEditExperimentPropertiesProps
+> = ({ onSave, onCancel, dataSource, canEdit = true }) => {
   const [uiMode, setUiMode] = useState<"view" | "edit">("view");
 
-  const permissions = usePermissions();
-  canEdit =
-    canEdit &&
-    checkDatasourceProjectPermissions(
-      dataSource,
-      permissions,
-      "editDatasourceSettings"
-    );
+  const permissionsUtil = usePermissionsUtil();
+  canEdit = canEdit && permissionsUtil.canUpdateDataSourceSettings(dataSource);
 
   const handleEdit = useCallback(() => {
     setUiMode("edit");
@@ -44,7 +35,7 @@ export const DataSourceViewEditExperimentProperties: FC<DataSourceViewEditExperi
       copy.settings.events = eventProperties;
       await onSave(copy);
     },
-    [dataSource, onSave]
+    [dataSource, onSave],
   );
 
   if (!dataSource) {

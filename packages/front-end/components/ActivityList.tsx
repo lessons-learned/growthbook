@@ -1,11 +1,12 @@
 import { FC } from "react";
 import { AuditInterface } from "back-end/types/audit";
 import Link from "next/link";
-import { date, datetime } from "shared";
-import useApi from "../hooks/useApi";
+import { date, datetime } from "shared/dates";
+import useApi from "@/hooks/useApi";
+import { useUser } from "@/services/UserContext";
 import LoadingOverlay from "./LoadingOverlay";
 import Avatar from "./Avatar/Avatar";
-//import { phaseSummary } from "../services/utils";
+//import { phaseSummary } from "@/services/utils";
 
 const eventActionMapping = {
   "experiment.start": "started experiment",
@@ -21,6 +22,7 @@ const ActivityList: FC<{
     events: AuditInterface[];
     experiments: { id: string; name: string }[];
   }>("/activity");
+  const { users } = useUser();
 
   if (error) {
     return <div className="alert alert-danger">{error.message}</div>;
@@ -39,22 +41,31 @@ const ActivityList: FC<{
     <div className="">
       <ul className="list-unstyled simple-divider pl-0 mb-0">
         {events.map((event) => {
+          let name = "API";
+          if ("id" in event.user) {
+            name = users.get(event.user.id)?.name ?? "";
+          }
           return (
             <li key={event.id} className="media d-flex w-100 hover-highlight">
-              <Link href={`/experiment/${event.entity.id}`}>
-                <a className="no-link-color w-100">
+              <Link
+                href={`/experiment/${event.entity.id}`}
+                className="no-link-color w-100"
+              >
+                <>
                   {"email" in event.user && event.user.email && (
                     <Avatar
                       email={event.user.email}
                       className="mr-2 float-left"
                       size={24}
+                      name={name}
                     />
                   )}
                   <div className="d-flex flex-column flex-fill ">
                     <div className="mb-1">
                       <strong>
                         {("name" in event.user && event.user.name) ||
-                          ("apiKey" in event.user && "API Key")}
+                          ("apiKey" in event.user && "API Key") ||
+                          ("system" in event.user && "System")}
                       </strong>{" "}
                       {eventActionMapping[event.event] || "modified"}{" "}
                       <strong>
@@ -67,27 +78,8 @@ const ActivityList: FC<{
                     >
                       {date(event.dateCreated)}
                     </div>
-                    {/*{details &&*/}
-                    {/*  (event.event === "experiment.start" ||*/}
-                    {/*    event.event === "experiment.phase") && (*/}
-                    {/*    <small>{phaseSummary(details)}</small>*/}
-                    {/*  )}*/}
-                    {/*{event.event === "experiment.stop" && (*/}
-                    {/*  <small>*/}
-                    {/*    {details && details.reason && (*/}
-                    {/*      <span className="mr-3">*/}
-                    {/*        <strong>Reason: </strong> {details.reason}*/}
-                    {/*      </span>*/}
-                    {/*    )}*/}
-                    {/*    {details && details.results && (*/}
-                    {/*      <>*/}
-                    {/*        <strong>Result: </strong> {details.results}*/}
-                    {/*      </>*/}
-                    {/*    )}*/}
-                    {/*  </small>*/}
-                    {/*)}*/}
                   </div>
-                </a>
+                </>
               </Link>
             </li>
           );

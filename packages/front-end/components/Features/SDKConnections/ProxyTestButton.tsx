@@ -17,10 +17,8 @@ export default function ProxyTestButton({
   showButton: boolean;
   mutate: () => void;
 }) {
-  const [
-    proxyTestResult,
-    setProxyTestResult,
-  ] = useState<null | ProxyTestResult>(null);
+  const [proxyTestResult, setProxyTestResult] =
+    useState<null | ProxyTestResult>(null);
 
   const { apiCall } = useAuth();
 
@@ -32,6 +30,7 @@ export default function ProxyTestButton({
     <>
       {proxyTestResult && (
         <Modal
+          trackingEventModalType=""
           header="Proxy Status"
           open={true}
           close={() => setProxyTestResult(null)}
@@ -55,8 +54,8 @@ export default function ProxyTestButton({
                     proxyTestResult.body.trim().substring(0, 1) === "<"
                       ? "html"
                       : proxyTestResult.body.trim().substring(0, 1) === "{"
-                      ? "json"
-                      : "none"
+                        ? "json"
+                        : "none"
                   }
                   code={proxyTestResult.body}
                   filename="response.body"

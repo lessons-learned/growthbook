@@ -1,8 +1,16 @@
 import { MetricInterface } from "back-end/types/metric";
 import { ExperimentInterface } from "back-end/types/experiment";
+import { MetricPriorSettings } from "back-end/types/fact-table";
 
 export const metrics: Record<string, MetricInterface> = {};
 export const experiments: Record<string, ExperimentInterface> = {};
+
+const priorSettings: MetricPriorSettings = {
+  mean: 0,
+  override: false,
+  proper: false,
+  stddev: 0,
+};
 
 metrics["signups"] = {
   id: "met_s1",
@@ -13,11 +21,20 @@ metrics["signups"] = {
   dateUpdated: new Date("2023-04-14"),
   queries: [],
   runStarted: new Date("2023-01-01"),
-  cap: 0,
+  priorSettings,
+  cappingSettings: {
+    type: "",
+    value: 0,
+  },
+  windowSettings: {
+    type: "conversion",
+    delayValue: 0,
+    delayUnit: "hours",
+    windowValue: 72,
+    windowUnit: "hours",
+  },
   column: "",
   conditions: [],
-  conversionWindowHours: 72,
-  earlyStart: false,
   ignoreNulls: false,
   inverse: false,
   loseRisk: 0.0125,
@@ -47,12 +64,20 @@ metrics["revenue"] = {
   column: "",
   inverse: false,
   ignoreNulls: false,
-  cap: 0,
+  priorSettings,
+  cappingSettings: {
+    type: "",
+    value: 0,
+  },
+  windowSettings: {
+    type: "conversion",
+    delayValue: 2.5,
+    delayUnit: "hours",
+    windowValue: 72,
+    windowUnit: "hours",
+  },
   denominator: "",
-  conversionWindowHours: 72,
-  conversionDelayHours: 2.5,
-  sql:
-    "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  timestamp,\n  amount as value\nFROM\n  orders",
+  sql: "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  timestamp,\n  amount as value\nFROM\n  orders",
   aggregation: "",
   queryFormat: "sql",
   status: "active",
@@ -96,12 +121,20 @@ metrics["conversions"] = {
   column: "",
   inverse: false,
   ignoreNulls: false,
-  cap: 0,
   denominator: "met_r1",
-  conversionWindowHours: 72,
-  conversionDelayHours: 0,
-  sql:
-    "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  timestamp\nFROM\n  orders",
+  priorSettings,
+  cappingSettings: {
+    type: "",
+    value: 0,
+  },
+  windowSettings: {
+    type: "conversion",
+    delayValue: 0,
+    delayUnit: "hours",
+    windowValue: 72,
+    windowUnit: "hours",
+  },
+  sql: "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  timestamp\nFROM\n  orders",
   aggregation: "",
   queryFormat: "sql",
   status: "active",
@@ -145,12 +178,20 @@ metrics["testvar"] = {
   column: "",
   inverse: false,
   ignoreNulls: false,
-  cap: 0,
   denominator: "met_c1",
-  conversionWindowHours: 72,
-  conversionDelayHours: 0,
-  sql:
-    "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  1 value,\n  timestamp\nFROM\n  orders",
+  priorSettings,
+  cappingSettings: {
+    type: "",
+    value: 0,
+  },
+  windowSettings: {
+    type: "conversion",
+    delayValue: 0,
+    delayUnit: "hours",
+    windowValue: 72,
+    windowUnit: "hours",
+  },
+  sql: "SELECT\n  userid user_id,\n  anonymousid anonymous_id,\n  1 value,\n  timestamp\nFROM\n  orders",
   aggregation: "COUNT(value) + 1",
   queryFormat: "sql",
   status: "active",
@@ -179,12 +220,13 @@ experiments["exp1"] = {
   id: "exp_1",
   tags: ["foo"],
   activationMetric: "",
-  metrics: ["met_s1", "met_r1", "met_t1"],
+  goalMetrics: ["met_s1", "met_r1", "met_t1"],
   archived: false,
+  hashVersion: 2,
   metricOverrides: [
     {
       id: "met_c1",
-      conversionDelayHours: 2,
+      delayHours: 2,
       regressionAdjustmentDays: 12,
       regressionAdjustmentOverride: true,
       regressionAdjustmentEnabled: true,
@@ -210,7 +252,8 @@ experiments["exp1"] = {
       loseRisk: 0.0225,
     },
   ],
-  guardrails: [],
+  guardrailMetrics: [],
+  secondaryMetrics: [],
   organization: "org_1234",
   project: "prj_1",
   owner: "Bryce",

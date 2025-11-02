@@ -5,11 +5,11 @@ import {
   Comment,
 } from "back-end/types/discussion";
 import { FaPencilAlt } from "react-icons/fa";
-import { date } from "shared";
-import { useAuth } from "../services/auth";
-import useApi from "../hooks/useApi";
-import { useUser } from "../services/UserContext";
-import usePermissions from "../hooks/usePermissions";
+import { date } from "shared/dates";
+import { useAuth } from "@/services/auth";
+import useApi from "@/hooks/useApi";
+import { useUser } from "@/services/UserContext";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
 import LoadingSpinner from "./LoadingSpinner";
 import Avatar from "./Avatar/Avatar";
 import DeleteButton from "./DeleteButton/DeleteButton";
@@ -19,30 +19,30 @@ import Markdown from "./Markdown/Markdown";
 const DiscussionThread: FC<{
   type: DiscussionParentType;
   id: string;
+  projects: string[];
   allowNewComments?: boolean;
   showTitle?: boolean;
   title?: string;
-  project?: string;
 }> = ({
   type,
   id,
   allowNewComments = true,
   showTitle = false,
   title = "Add comment",
-  project,
+  projects,
 }) => {
   const { apiCall } = useAuth();
   const { userId, users } = useUser();
-  const [edit, setEdit] = useState(null);
+  const [edit, setEdit] = useState<number | null>(null);
 
-  const permissions = usePermissions();
+  const permissions = usePermissionsUtil();
 
-  if (!permissions.check("addComments", project)) {
+  if (!permissions.canAddComment(projects)) {
     allowNewComments = false;
   }
 
   const { data, error, mutate } = useApi<{ discussion: DiscussionInterface }>(
-    `/discussion/${type}/${id}`
+    `/discussion/${type}/${id}`,
   );
 
   if (error) {
@@ -65,7 +65,7 @@ const DiscussionThread: FC<{
 
             return (
               <li className="media mb-3" key={i}>
-                <Avatar email={email} className="mr-2" />
+                <Avatar email={email} className="mr-2" name={name} />
                 <div className="media-body">
                   {edit === i ? (
                     <CommentForm
@@ -95,7 +95,6 @@ const DiscussionThread: FC<{
                               href="#"
                               onClick={(e) => {
                                 e.preventDefault();
-                                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'number' is not assignable to par... Remove this comment to see the full error message
                                 setEdit(i);
                               }}
                             >
@@ -110,7 +109,7 @@ const DiscussionThread: FC<{
                                   `/discussion/${type}/${id}/${i}`,
                                   {
                                     method: "DELETE",
-                                  }
+                                  },
                                 );
                                 mutate();
                               }}
@@ -140,7 +139,7 @@ const DiscussionThread: FC<{
         </p>
       )}
       {allowNewComments && (
-        <>
+        <div className="d-print-none">
           {!showTitle && <hr />}
           {showTitle && <h4 className="add-comment-title">{title}</h4>}
           <CommentForm
@@ -150,7 +149,7 @@ const DiscussionThread: FC<{
             id={id}
             type={type}
           />
-        </>
+        </div>
       )}
     </div>
   );

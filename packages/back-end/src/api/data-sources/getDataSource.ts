@@ -1,17 +1,14 @@
-import { GetDataSourceResponse } from "../../../types/openapi";
+import { GetDataSourceResponse } from "back-end/types/openapi";
 import {
   getDataSourceById,
   toDataSourceApiInterface,
-} from "../../models/DataSourceModel";
-import { createApiRequestHandler } from "../../util/handler";
-import { getDataSourceValidator } from "../../validators/openapi";
+} from "back-end/src/models/DataSourceModel";
+import { createApiRequestHandler } from "back-end/src/util/handler";
+import { getDataSourceValidator } from "back-end/src/validators/openapi";
 
 export const getDataSource = createApiRequestHandler(getDataSourceValidator)(
   async (req): Promise<GetDataSourceResponse> => {
-    const dataSource = await getDataSourceById(
-      req.params.id,
-      req.organization.id
-    );
+    const dataSource = await getDataSourceById(req.context, req.params.id);
     if (!dataSource) {
       throw new Error("Could not find dataSource with that id");
     }
@@ -19,5 +16,5 @@ export const getDataSource = createApiRequestHandler(getDataSourceValidator)(
     return {
       dataSource: toDataSourceApiInterface(dataSource),
     };
-  }
+  },
 );

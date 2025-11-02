@@ -1,13 +1,52 @@
+import { z } from "zod";
+import {
+  queryPointerValidator,
+  queryStatusValidator,
+} from "back-end/src/validators/queries";
 import { QueryLanguage } from "./datasource";
 
-export type QueryStatus = "running" | "failed" | "succeeded";
+export type QueryStatus = z.infer<typeof queryStatusValidator>;
 
-export type QueryPointer = {
-  query: string;
-  status: QueryStatus;
-  name: string;
-};
+export type QueryPointer = z.infer<typeof queryPointerValidator>;
+
 export type Queries = QueryPointer[];
+
+export type QueryStatistics = {
+  executionDurationMs?: number;
+  totalSlotMs?: number;
+  rowsProcessed?: number;
+  bytesProcessed?: number;
+  bytesBilled?: number;
+  warehouseCachedResult?: boolean;
+  partitionsUsed?: boolean;
+};
+
+export type ExperimentQueryMetadata = {
+  experimentProject?: string;
+  experimentOwner?: string;
+  experimentTags?: string[];
+};
+
+export type AdditionalQueryMetadata = ExperimentQueryMetadata;
+
+export type QueryMetadata = AdditionalQueryMetadata & {
+  userName?: string;
+  userId?: string;
+};
+
+export type QueryType =
+  | ""
+  | "pastExperiment"
+  | "metricAnalysis"
+  | "experimentMetric"
+  | "dimensionSlices"
+  | "experimentUnits"
+  | "experimentDropUnitsTable"
+  | "experimentResults"
+  | "experimentTraffic"
+  | "experimentMultiMetric"
+  | "populationMetric"
+  | "populationMultiMetric";
 
 export interface QueryInterface {
   id: string;
@@ -17,11 +56,18 @@ export interface QueryInterface {
   query: string;
   status: QueryStatus;
   createdAt: Date;
-  startedAt: Date;
+  startedAt?: Date;
   finishedAt?: Date;
   heartbeat: Date;
   // eslint-disable-next-line
   result?: Record<string, any>;
-  rawResult?: Record<string, number | string | boolean>[];
+  queryType?: QueryType;
+  // eslint-disable-next-line
+  rawResult?: Record<string, any>[];
   error?: string;
+  dependencies?: string[]; // must succeed before running query
+  runAtEnd?: boolean; // only run when all other queries in model finish
+  cachedQueryUsed?: string;
+  statistics?: QueryStatistics;
+  externalId?: string;
 }

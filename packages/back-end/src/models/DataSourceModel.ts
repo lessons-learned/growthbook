@@ -1,24 +1,35 @@
 import mongoose from "mongoose";
 import uniqid from "uniqid";
+import { cloneDeep, isEqual } from "lodash";
 import {
   DataSourceInterface,
   DataSourceParams,
   DataSourceSettings,
   DataSourceType,
-} from "../../types/datasource";
-import { GoogleAnalyticsParams } from "../../types/integrations/googleanalytics";
-import { getOauth2Client } from "../integrations/GoogleAnalytics";
+} from "back-end/types/datasource";
+import { GoogleAnalyticsParams } from "back-end/types/integrations/googleanalytics";
+import { getOauth2Client } from "back-end/src/integrations/GoogleAnalytics";
 import {
   encryptParams,
   getSourceIntegrationObject,
   testDataSourceConnection,
-} from "../services/datasource";
-import { usingFileConfig, getConfigDatasources } from "../init/config";
-import { upgradeDatasourceObject } from "../util/migrations";
-import { ApiDataSource } from "../../types/openapi";
-import { queueCreateInformationSchema } from "../jobs/createInformationSchema";
+  testQueryValidity,
+} from "back-end/src/services/datasource";
+import {
+  usingFileConfig,
+  getConfigDatasources,
+} from "back-end/src/init/config";
+import { upgradeDatasourceObject } from "back-end/src/util/migrations";
+import { ApiDataSource } from "back-end/types/openapi";
+import { queueCreateInformationSchema } from "back-end/src/jobs/createInformationSchema";
+import { IS_CLOUD } from "back-end/src/util/secrets";
+import { ReqContext } from "back-end/types/organization";
+import { ApiReqContext } from "back-end/types/api";
+import { logger } from "back-end/src/util/logger";
+import { deleteClickhouseUser } from "back-end/src/services/clickhouse";
+import { deleteFactTable, getFactTable } from "./FactTableModel";
 
-const dataSourceSchema = new mongoose.Schema({
+const dataSourceSchema = new mongoose.Schema<DataSourceDocument>({
   id: String,
   name: String,
   description: String,
@@ -28,104 +39,209 @@ const dataSourceSchema = new mongoose.Schema({
   },
   dateCreated: Date,
   dateUpdated: Date,
-  type: { type: String },
+  type: { type: String, index: true },
   params: String,
   projects: {
     type: [String],
     index: true,
   },
   settings: {},
+  lockUntil: Date,
 });
 dataSourceSchema.index({ id: 1, organization: 1 }, { unique: true });
 type DataSourceDocument = mongoose.Document & DataSourceInterface;
 
-const DataSourceModel = mongoose.model<DataSourceDocument>(
+const DataSourceModel = mongoose.model<DataSourceInterface>(
   "DataSource",
-  dataSourceSchema
+  dataSourceSchema,
 );
 
 function toInterface(doc: DataSourceDocument): DataSourceInterface {
   return upgradeDatasourceObject(doc.toJSON());
 }
 
-export async function getDataSourcesByOrganization(organization: string) {
+export async function getInstallationDatasources(): Promise<
+  DataSourceInterface[]
+> {
+  if (IS_CLOUD) {
+    throw new Error("Cannot get all installation data sources in cloud mode");
+  }
+  if (usingFileConfig()) {
+    // We don't need the correct organization part of the response so passing "".
+    return getConfigDatasources("");
+  }
+  const docs: DataSourceDocument[] = await DataSourceModel.find();
+  return docs.map(toInterface);
+}
+
+export async function getDataSourcesByOrganization(
+  context: ReqContext | ApiReqContext,
+): Promise<DataSourceInterface[]> {
   // If using config.yml, immediately return the list from there
   if (usingFileConfig()) {
-    return getConfigDatasources(organization);
+    return getConfigDatasources(context.org.id);
   }
 
-  return (
-    await DataSourceModel.find({
-      organization,
-    })
-  ).map(toInterface);
+  const docs: DataSourceDocument[] = await DataSourceModel.find({
+    organization: context.org.id,
+  });
+
+  const datasources = docs.map(toInterface);
+
+  return datasources.filter((ds) =>
+    context.permissions.canReadMultiProjectResource(ds.projects),
+  );
 }
-export async function getDataSourceById(id: string, organization: string) {
+
+// WARNING: This does not restrict by organization
+export async function _dangerourslyGetAllDatasourcesByOrganizations(
+  organizations: string[],
+): Promise<DataSourceInterface[]> {
+  const docs: DataSourceDocument[] = await DataSourceModel.find({
+    organization: { $in: organizations },
+  });
+
+  return docs.map(toInterface);
+}
+
+// WARNING: This does not restrict by organization
+export async function _dangerousGetAllGrowthbookClickhouseDataSources() {
+  const docs: DataSourceDocument[] = await DataSourceModel.find({
+    type: "growthbook_clickhouse",
+  });
+  return docs.map(toInterface);
+}
+
+export async function getGrowthbookDatasource(context: ReqContext) {
+  const orgId = context.org.id;
+  const doc: DataSourceDocument | null = await DataSourceModel.findOne({
+    type: "growthbook_clickhouse",
+    organization: orgId,
+  });
+
+  if (!doc) return null;
+
+  const datasource = toInterface(doc);
+
+  return context.permissions.canReadMultiProjectResource(datasource.projects)
+    ? datasource
+    : null;
+}
+
+export async function getDataSourceById(
+  context: ReqContext | ApiReqContext,
+  id: string,
+) {
   // If using config.yml, immediately return the from there
   if (usingFileConfig()) {
     return (
-      getConfigDatasources(organization).filter((d) => d.id === id)[0] || null
+      getConfigDatasources(context.org.id).filter((d) => d.id === id)[0] || null
     );
   }
 
-  const doc = await DataSourceModel.findOne({
+  const doc: DataSourceDocument | null = await DataSourceModel.findOne({
     id,
-    organization,
+    organization: context.org.id,
   });
 
-  return doc ? toInterface(doc) : null;
+  if (!doc) return null;
+
+  const datasource = toInterface(doc);
+
+  return context.permissions.canReadMultiProjectResource(datasource.projects)
+    ? datasource
+    : null;
 }
-export async function getDataSourcesByIds(ids: string[], organization: string) {
-  // If using config.yml, immediately return the list from there
+
+export async function getDataSourcesByIds(
+  context: ReqContext | ApiReqContext,
+  ids: string[],
+) {
   if (usingFileConfig()) {
-    return (
-      getConfigDatasources(organization).filter((d) => ids.includes(d.id)) || []
+    return getConfigDatasources(context.org.id).filter((d) =>
+      ids.includes(d.id),
     );
   }
 
-  return (
-    await DataSourceModel.find({
-      id: { $in: ids },
-      organization,
-    })
-  ).map(toInterface);
+  const docs: DataSourceDocument[] = await DataSourceModel.find({
+    id: { $in: ids },
+    organization: context.org.id,
+  });
+
+  return docs
+    .map(toInterface)
+    .filter((datasource) =>
+      context.permissions.canReadMultiProjectResource(datasource.projects),
+    );
 }
 
 export async function removeProjectFromDatasources(
   project: string,
-  organization: string
+  organization: string,
 ) {
   await DataSourceModel.updateMany(
     { organization, projects: project },
-    { $pull: { projects: project } }
+    { $pull: { projects: project } },
   );
 }
 
-export async function getOrganizationsWithDatasources(): Promise<string[]> {
-  if (usingFileConfig()) {
-    return [];
-  }
-  return await DataSourceModel.distinct("organization");
-}
-export async function deleteDatasourceById(id: string, organization: string) {
+export async function deleteDatasource(
+  context: ReqContext | ApiReqContext,
+  datasource: DataSourceInterface,
+) {
   if (usingFileConfig()) {
     throw new Error("Cannot delete. Data sources managed by config.yml");
   }
+  if (datasource.type === "growthbook_clickhouse") {
+    await deleteClickhouseUser(context.org.id);
+
+    // Also delete the main events fact table
+    try {
+      const ft = await getFactTable(context, "ch_events");
+      if (ft) {
+        await deleteFactTable(context, ft, { bypassManagedByCheck: true });
+      }
+    } catch (e) {
+      logger.error(e, "Error deleting clickhouse events fact table");
+    }
+  }
   await DataSourceModel.deleteOne({
-    id,
-    organization,
+    id: datasource.id,
+    organization: context.org.id,
+  });
+}
+
+/**
+ * Deletes data sources where the provided project is the only project of that data source.
+ * @param projectId
+ * @param organizationId
+ */
+export async function deleteAllDataSourcesForAProject({
+  projectId,
+  organizationId,
+}: {
+  projectId: string;
+  organizationId: string;
+}) {
+  if (usingFileConfig()) {
+    throw new Error("Cannot delete. Data sources managed by config.yml");
+  }
+
+  await DataSourceModel.deleteMany({
+    organization: organizationId,
+    projects: [projectId],
   });
 }
 
 export async function createDataSource(
-  organization: string,
+  context: ReqContext,
   name: string,
   type: DataSourceType,
   params: DataSourceParams,
   settings: DataSourceSettings,
   id?: string,
   description: string = "",
-  projects?: string[]
+  projects?: string[],
 ) {
   if (usingFileConfig()) {
     throw new Error("Cannot add. Data sources managed by config.yml");
@@ -137,25 +253,16 @@ export async function createDataSource(
   if (type === "google_analytics") {
     const oauth2Client = getOauth2Client();
     const { tokens } = await oauth2Client.getToken(
-      (params as GoogleAnalyticsParams).refreshToken
+      (params as GoogleAnalyticsParams).refreshToken,
     );
     (params as GoogleAnalyticsParams).refreshToken = tokens.refresh_token || "";
-  }
-
-  // Add any missing exposure query ids
-  if (settings.queries?.exposure) {
-    settings.queries.exposure.forEach((exposure) => {
-      if (!exposure.id) {
-        exposure.id = uniqid("exq_");
-      }
-    });
   }
 
   const datasource: DataSourceInterface = {
     id,
     name,
     description,
-    organization,
+    organization: context.org.id,
     type,
     settings,
     dateCreated: new Date(),
@@ -164,46 +271,170 @@ export async function createDataSource(
     projects,
   };
 
-  await testDataSourceConnection(datasource);
-  const model = await DataSourceModel.create(datasource);
+  await testDataSourceConnection(context, datasource);
 
-  const integration = getSourceIntegrationObject(datasource);
+  // Add any missing exposure query ids and check query validity
+  settings = await validateExposureQueriesAndAddMissingIds(
+    context,
+    datasource,
+    settings,
+    true,
+  );
+
+  const model = (await DataSourceModel.create(
+    datasource,
+  )) as DataSourceDocument;
+
+  const integration = getSourceIntegrationObject(context, datasource);
   if (
     integration.getInformationSchema &&
     integration.getSourceProperties().supportsInformationSchema
   ) {
-    await queueCreateInformationSchema(datasource.id, organization);
+    logger.debug("queueCreateInformationSchema");
+    await queueCreateInformationSchema(datasource.id, context.org.id);
   }
 
   return toInterface(model);
 }
 
+// Add any missing exposure query ids and validate any new, changed, or previously errored queries
+export async function validateExposureQueriesAndAddMissingIds(
+  context: ReqContext,
+  datasource: DataSourceInterface,
+  updates: Partial<DataSourceSettings>,
+  forceCheckValidity: boolean = false,
+): Promise<Partial<DataSourceSettings>> {
+  const updatesCopy = cloneDeep(updates);
+  if (updatesCopy.queries?.exposure) {
+    await Promise.all(
+      updatesCopy.queries.exposure.map(async (exposure) => {
+        let checkValidity = forceCheckValidity;
+        if (!exposure.id) {
+          exposure.id = uniqid("exq_");
+          checkValidity = true;
+        } else if (!forceCheckValidity) {
+          const existingQuery = datasource.settings.queries?.exposure?.find(
+            (q) => q.id == exposure.id,
+          );
+          if (
+            !existingQuery ||
+            !isEqual(existingQuery, exposure) ||
+            existingQuery.error
+          ) {
+            checkValidity = true;
+          }
+        }
+        if (checkValidity) {
+          const integration = getSourceIntegrationObject(context, datasource);
+          exposure.error = await testQueryValidity(
+            integration,
+            exposure,
+            context.org.settings?.testQueryDays,
+          );
+        }
+      }),
+    );
+  }
+  return updatesCopy;
+}
+
+// Returns true if there are any actual changes, besides dateUpdated, from the actual datasource
+export function hasActualChanges(
+  datasource: DataSourceInterface,
+  updates: Partial<DataSourceInterface>,
+) {
+  const updateKeys = Object.keys(updates).filter(
+    (key) => key !== "dateUpdated",
+  ) as Array<keyof DataSourceInterface>;
+
+  return updateKeys.some((key) => !isEqual(datasource[key], updates[key]));
+}
+
 export async function updateDataSource(
-  id: string,
-  organization: string,
-  updates: Partial<DataSourceInterface>
+  context: ReqContext | ApiReqContext,
+  datasource: DataSourceInterface,
+  updates: Partial<DataSourceInterface>,
 ) {
   if (usingFileConfig()) {
     throw new Error("Cannot update. Data sources managed by config.yml");
   }
 
-  // Add any missing exposure query ids
-  if (updates.settings?.queries?.exposure) {
-    updates.settings.queries.exposure.forEach((exposure) => {
-      if (!exposure.id) {
-        exposure.id = uniqid("exq_");
-      }
-    });
+  if (updates.settings) {
+    updates.settings = await validateExposureQueriesAndAddMissingIds(
+      context,
+      datasource,
+      updates.settings,
+    );
+  }
+  if (!hasActualChanges(datasource, updates)) {
+    return;
   }
 
   await DataSourceModel.updateOne(
     {
-      id,
-      organization,
+      id: datasource.id,
+      organization: context.org.id,
     },
     {
       $set: updates,
-    }
+    },
+  );
+}
+
+function isLocked(datasource: DataSourceInterface): boolean {
+  if (usingFileConfig() || !datasource.lockUntil) return false;
+  return datasource.lockUntil > new Date();
+}
+
+export async function lockDataSource(
+  context: ReqContext | ApiReqContext,
+  datasource: DataSourceInterface,
+  seconds: number,
+) {
+  if (usingFileConfig()) {
+    throw new Error("Cannot lock. Data sources managed by config.yml");
+  }
+  if (datasource.organization !== context.org.id) {
+    throw new Error("Cannot lock data source from another organization");
+  }
+
+  // Already locked, throw error
+  if (isLocked(datasource)) {
+    throw new Error(
+      "Data source is currently being modified. Please try again later.",
+    );
+  }
+
+  await DataSourceModel.updateOne(
+    {
+      id: datasource.id,
+      organization: context.org.id,
+    },
+    {
+      $set: { lockUntil: new Date(Date.now() + seconds * 1000) },
+    },
+  );
+}
+
+export async function unlockDataSource(
+  context: ReqContext | ApiReqContext,
+  datasource: DataSourceInterface,
+) {
+  if (usingFileConfig()) {
+    throw new Error("Cannot unlock. Data sources managed by config.yml");
+  }
+  if (datasource.organization !== context.org.id) {
+    throw new Error("Cannot unlock data source from another organization");
+  }
+
+  await DataSourceModel.updateOne(
+    {
+      id: datasource.id,
+      organization: context.org.id,
+    },
+    {
+      $set: { lockUntil: null },
+    },
   );
 }
 
@@ -212,12 +443,12 @@ export async function updateDataSource(
 export async function _dangerousGetAllDatasources(): Promise<
   DataSourceInterface[]
 > {
-  const all = await DataSourceModel.find();
+  const all: DataSourceDocument[] = await DataSourceModel.find();
   return all.map(toInterface);
 }
 
 export function toDataSourceApiInterface(
-  datasource: DataSourceInterface
+  datasource: DataSourceInterface,
 ): ApiDataSource {
   const settings = datasource.settings;
   const obj: ApiDataSource = {
@@ -240,12 +471,13 @@ export function toDataSourceApiInterface(
       sql: q.query,
       includesNameColumns: !!q.hasNameCol,
       dimensionColumns: q.dimensions,
+      error: q.error,
     })),
     identifierJoinQueries: (settings?.queries?.identityJoins || []).map(
       (q) => ({
         identifierTypes: q.ids,
         sql: q.query,
-      })
+      }),
     ),
     eventTracker: settings?.schemaFormat || "custom",
   };

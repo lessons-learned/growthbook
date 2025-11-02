@@ -21,22 +21,22 @@ properties:
   dateUpdated:
     type: string
     format: date-time
-  archived: 
+  archived:
     type: boolean
-  description: 
+  description:
     type: string
-  owner: 
+  owner:
     type: string
-  project: 
+  project:
     type: string
-  valueType: 
+  valueType:
     type: string
     enum:
       - boolean
       - string
       - number
       - json
-  defaultValue: 
+  defaultValue:
     type: string
   tags:
     type: array
@@ -46,6 +46,11 @@ properties:
     type: object
     additionalProperties:
       $ref: "./FeatureEnvironment.yaml"
+  prerequisites:
+    type: array
+    description: "Feature IDs. Each feature must evaluate to `true`"
+    items:
+      type: string
   revision:
     type: object
     required:
@@ -63,3 +68,6 @@ properties:
         format: date-time
       publishedBy:
         type: string
+  customFields:
+    type: object
+    additionalProperties: true

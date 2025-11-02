@@ -31,7 +31,9 @@ type SlackIntegrationAddEditModalProps = {
   error: string | null;
 };
 
-export const SlackIntegrationAddEditModal: FC<SlackIntegrationAddEditModalProps> = ({
+export const SlackIntegrationAddEditModal: FC<
+  SlackIntegrationAddEditModalProps
+> = ({
   projects,
   environments,
   tagOptions,
@@ -100,6 +102,7 @@ export const SlackIntegrationAddEditModal: FC<SlackIntegrationAddEditModalProps>
 
   return (
     <Modal
+      trackingEventModalType=""
       header={modalTitle}
       cta={buttonText}
       close={onClose}
@@ -231,7 +234,7 @@ export const SlackIntegrationAddEditModal: FC<SlackIntegrationAddEditModalProps>
             onChange={(selected: string[]) => {
               form.setValue(
                 "tags",
-                selected.map((item) => item)
+                selected.map((item) => item),
               );
               handleFormValidation();
             }}

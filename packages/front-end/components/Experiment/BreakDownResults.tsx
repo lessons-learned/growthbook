@@ -1,199 +1,322 @@
 import { FC, useMemo, useState } from "react";
-import { MetricInterface } from "back-end/types/metric";
 import {
   ExperimentReportResultDimension,
   ExperimentReportVariation,
-  MetricRegressionAdjustmentStatus,
+  MetricSnapshotSettings,
 } from "back-end/types/report";
-import { ExperimentStatus, MetricOverride } from "back-end/types/experiment";
-import { PValueCorrection, StatsEngine } from "back-end/types/stats";
-import { useDefinitions } from "@/services/DefinitionsContext";
 import {
-  applyMetricOverrides,
-  setAdjustedPValuesOnResults,
-  ExperimentTableRow,
-  useRiskVariation,
-} from "@/services/experiments";
-import Toggle from "../Forms/Toggle";
-import ResultsTable from "./ResultsTable";
+  ExperimentStatus,
+  ExperimentType,
+  MetricOverride,
+} from "back-end/types/experiment";
+import {
+  DifferenceType,
+  PValueCorrection,
+  StatsEngine,
+} from "back-end/types/stats";
+import { ExperimentMetricInterface } from "shared/experiments";
+import { FaAngleRight, FaUsers } from "react-icons/fa";
+import Collapsible from "react-collapsible";
+import { useDefinitions } from "@/services/DefinitionsContext";
+import ResultsTable, {
+  RESULTS_TABLE_COLUMNS,
+} from "@/components/Experiment/ResultsTable";
+import { QueryStatusData } from "@/components/Queries/RunQueriesButton";
+import { getRenderLabelColumn } from "@/components/Experiment/CompactResults";
+import { ResultsMetricFilters } from "@/components/Experiment/Results";
+import ResultsMetricFilter from "@/components/Experiment/ResultsMetricFilter";
+import { SSRPolyfills } from "@/hooks/useSSRPolyfills";
+import useOrgSettings from "@/hooks/useOrgSettings";
+import { useExperimentDimensionRows } from "@/hooks/useExperimentDimensionRows";
 import UsersTable from "./UsersTable";
 
-const FULL_STATS_LIMIT = 5;
-
-type TableDef = {
-  metric: MetricInterface;
-  isGuardrail: boolean;
-  rows: ExperimentTableRow[];
+const numberFormatter = Intl.NumberFormat();
+export const includeVariation = (
+  d: ExperimentReportResultDimension,
+  dimensionValuesFilter?: string[],
+): boolean => {
+  return (
+    !dimensionValuesFilter ||
+    dimensionValuesFilter.length === 0 ||
+    dimensionValuesFilter.includes(d.name)
+  );
 };
 
 const BreakDownResults: FC<{
+  experimentId: string;
   results: ExperimentReportResultDimension[];
+  queryStatusData?: QueryStatusData;
   variations: ExperimentReportVariation[];
-  metrics: string[];
+  variationFilter?: number[];
+  baselineRow?: number;
+  columnsFilter?: Array<(typeof RESULTS_TABLE_COLUMNS)[number]>;
+  goalMetrics: string[];
+  secondaryMetrics: string[];
+  guardrailMetrics: string[];
   metricOverrides: MetricOverride[];
-  guardrails?: string[];
+  idPrefix?: string;
   dimensionId: string;
+  dimensionValuesFilter?: string[];
   isLatestPhase: boolean;
+  phase: number;
   startDate: string;
+  endDate: string;
   reportDate: Date;
   activationMetric?: string;
   status: ExperimentStatus;
-  statsEngine?: StatsEngine;
+  statsEngine: StatsEngine;
   pValueCorrection?: PValueCorrection;
-  regressionAdjustmentEnabled?: boolean;
-  metricRegressionAdjustmentStatuses?: MetricRegressionAdjustmentStatus[];
+  settingsForSnapshotMetrics?: MetricSnapshotSettings[];
   sequentialTestingEnabled?: boolean;
+  showErrorsOnQuantileMetrics?: boolean;
+  differenceType: DifferenceType;
+  metricFilter?: ResultsMetricFilters;
+  setMetricFilter?: (filter: ResultsMetricFilters) => void;
+  experimentType?: ExperimentType;
+  ssrPolyfills?: SSRPolyfills;
+  hideDetails?: boolean;
+  renderMetricName?: (
+    metric: ExperimentMetricInterface,
+  ) => React.ReactElement | string;
+  noStickyHeader?: boolean;
+  sortBy?: "metric-tags" | "significance" | "change" | "custom" | null;
+  setSortBy?: (
+    s: "metric-tags" | "significance" | "change" | "custom" | null,
+  ) => void;
+  sortDirection?: "asc" | "desc" | null;
+  setSortDirection?: (d: "asc" | "desc" | null) => void;
+  customMetricOrder?: string[];
+  analysisBarSettings?: {
+    variationFilter: number[];
+  };
 }> = ({
+  experimentId,
   dimensionId,
+  dimensionValuesFilter,
   results,
+  queryStatusData,
   variations,
-  metrics,
+  variationFilter,
+  baselineRow,
+  columnsFilter,
+  goalMetrics,
+  secondaryMetrics,
   metricOverrides,
-  guardrails,
+  idPrefix,
+  guardrailMetrics,
   isLatestPhase,
+  phase,
   startDate,
+  endDate,
   activationMetric,
   status,
   reportDate,
   statsEngine,
   pValueCorrection,
-  regressionAdjustmentEnabled,
-  metricRegressionAdjustmentStatuses,
+  settingsForSnapshotMetrics,
   sequentialTestingEnabled,
+  showErrorsOnQuantileMetrics,
+  differenceType,
+  metricFilter,
+  setMetricFilter,
+  experimentType,
+  ssrPolyfills,
+  hideDetails,
+  renderMetricName,
+  noStickyHeader,
+  sortBy,
+  setSortBy,
+  sortDirection,
+  setSortDirection,
+  customMetricOrder,
+  analysisBarSettings,
 }) => {
-  const { getDimensionById, getMetricById, ready } = useDefinitions();
+  const [showMetricFilter, setShowMetricFilter] = useState<boolean>(false);
 
-  const dimension = useMemo(() => {
-    return getDimensionById(dimensionId)?.name || "Dimension";
-  }, [getDimensionById, dimensionId]);
+  const { getDimensionById, getExperimentMetricById } = useDefinitions();
 
-  const tooManyDimensions = results.length > FULL_STATS_LIMIT;
+  const _settings = useOrgSettings();
+  const settings = ssrPolyfills?.useOrgSettings?.() || _settings;
 
-  const [fullStatsToggle, setFullStats] = useState(false);
-  const fullStats = !tooManyDimensions || fullStatsToggle;
+  const dimension =
+    ssrPolyfills?.getDimensionById?.(dimensionId)?.name ||
+    getDimensionById(dimensionId)?.name ||
+    dimensionId?.split(":")?.[1] ||
+    "Dimension";
 
-  const tables = useMemo<TableDef[]>(() => {
-    if (!ready) return [];
-    if (pValueCorrection && statsEngine === "frequentist") {
-      setAdjustedPValuesOnResults(results, metrics, pValueCorrection);
-    }
-    return Array.from(new Set(metrics.concat(guardrails || [])))
-      .map((metricId) => {
-        const metric = getMetricById(metricId);
-        if (!metric) return;
-        const { newMetric } = applyMetricOverrides(metric, metricOverrides);
-        let regressionAdjustmentStatus:
-          | MetricRegressionAdjustmentStatus
-          | undefined;
-        if (regressionAdjustmentEnabled && metricRegressionAdjustmentStatuses) {
-          regressionAdjustmentStatus = metricRegressionAdjustmentStatuses.find(
-            (s) => s.metric === metricId
-          );
-        }
+  const totalUsers = useMemo(() => {
+    let totalUsers = 0;
+    results?.forEach((result) => {
+      if (includeVariation(result, dimensionValuesFilter)) {
+        result?.variations?.forEach((v) => (totalUsers += v?.users || 0));
+      }
+    });
+    return totalUsers;
+  }, [results, dimensionValuesFilter]);
 
-        return {
-          metric: newMetric,
-          isGuardrail: !metrics.includes(metricId),
-          rows: results.map((d) => ({
-            label: d.name,
-            metric: newMetric,
-            variations: d.variations.map((variation) => {
-              return variation.metrics[metricId];
-            }),
-            regressionAdjustmentStatus,
-          })) as ExperimentTableRow[],
-        };
-      })
-      .filter((table) => table?.metric) as TableDef[];
-  }, [
+  const { tables, allMetricTags } = useExperimentDimensionRows({
     results,
-    metrics,
+    goalMetrics,
+    secondaryMetrics,
+    guardrailMetrics,
     metricOverrides,
-    regressionAdjustmentEnabled,
-    metricRegressionAdjustmentStatuses,
+    ssrPolyfills,
+    metricFilter,
+    sortBy,
+    sortDirection,
+    customMetricOrder,
+    analysisBarSettings,
+    statsEngine,
     pValueCorrection,
-    guardrails,
-    ready,
-  ]);
+    settingsForSnapshotMetrics,
+    dimensionValuesFilter,
+    showErrorsOnQuantileMetrics,
+  });
 
-  const risk = useRiskVariation(
-    variations.length,
-    ([] as ExperimentTableRow[]).concat(...tables.map((t) => t.rows))
-  );
+  const activationMetricObj = activationMetric
+    ? ssrPolyfills?.getExperimentMetricById?.(activationMetric) ||
+      getExperimentMetricById(activationMetric)
+    : undefined;
+
+  const isBandit = experimentType === "multi-armed-bandit";
+  const isHoldout = experimentType === "holdout";
 
   return (
     <div className="mb-3">
-      <div className="mb-4 px-3">
-        {dimensionId === "pre:activation" && activationMetric && (
-          <div className="alert alert-info mt-1">
+      <div className="mb-4">
+        {dimensionId === "pre:activation" && activationMetricObj && (
+          <div className="alert alert-info mt-1 mx-3">
             Your experiment has an Activation Metric (
-            <strong>{getMetricById(activationMetric)?.name}</strong>
+            <strong>{activationMetricObj?.name}</strong>
             ). This report lets you compare activated users with those who
             entered into the experiment, but were not activated.
           </div>
         )}
-        <UsersTable
-          dimensionId={dimensionId}
-          results={results}
-          variations={variations}
-        />
+        {!isBandit && (
+          <div className="users">
+            <Collapsible
+              trigger={
+                <div className="d-inline-flex mx-3 align-items-center">
+                  <FaUsers size={16} className="mr-1" />
+                  {numberFormatter.format(totalUsers)} total units
+                  <FaAngleRight className="chevron ml-1" />
+                </div>
+              }
+              transitionTime={100}
+            >
+              <UsersTable
+                dimension={dimension}
+                dimensionValuesFilter={dimensionValuesFilter}
+                results={results}
+                variations={variations}
+                settings={settings}
+              />
+            </Collapsible>
+          </div>
+        )}
       </div>
 
-      {tooManyDimensions && (
-        <div className="row align-items-center mb-3 px-3">
-          <div className="col">
-            <div className="alert alert-warning mb-0">
-              <strong>Warning: </strong> This dimension contains many unique
-              values. We&apos;ve disabled the stats engine by default since it
-              may be misleading.
-            </div>
-          </div>
-          <div className="col-auto">
-            <Toggle
-              value={fullStats}
-              setValue={setFullStats}
-              id="full-stats"
-              label="Show Full Stats"
-            />
-            Stats Engine
-          </div>
-        </div>
-      )}
-
-      {tables.map((table) => (
-        <div className="mb-5" key={table.metric.id}>
-          <div className="px-3">
-            <h3>
-              {table.isGuardrail ? (
-                <small className="text-muted">Guardrail: </small>
-              ) : (
-                ""
-              )}
-              {table.metric.name}
-            </h3>
-          </div>
-
-          <div className="experiment-compact-holder">
+      <div className="d-flex mx-2">
+        {setMetricFilter ? (
+          <ResultsMetricFilter
+            metricTags={allMetricTags}
+            metricFilter={metricFilter}
+            setMetricFilter={setMetricFilter}
+            showMetricFilter={showMetricFilter}
+            setShowMetricFilter={setShowMetricFilter}
+          />
+        ) : null}
+      </div>
+      {tables.map((table, i) => {
+        return (
+          <>
+            <h5 className="ml-2 mt-2 position-relative">
+              {table.rows[0]?.resultGroup === "goal"
+                ? "Goal Metric"
+                : table.rows[0]?.resultGroup === "secondary"
+                  ? "Secondary Metric"
+                  : table.rows[0]?.resultGroup === "guardrail"
+                    ? "Guardrail Metric"
+                    : null}
+            </h5>
             <ResultsTable
+              key={i}
+              experimentId={experimentId}
               dateCreated={reportDate}
               isLatestPhase={isLatestPhase}
+              phase={phase}
               startDate={startDate}
+              endDate={endDate}
               status={status}
+              queryStatusData={queryStatusData}
               variations={variations}
-              id={table.metric.id}
-              tableRowAxis="dimension"
-              labelHeader={dimension}
-              renderLabelColumn={(label) => label || <em>unknown</em>}
+              variationFilter={variationFilter}
+              baselineRow={baselineRow}
+              columnsFilter={columnsFilter}
               rows={table.rows}
-              fullStats={fullStats}
+              dimension={dimension}
+              id={(idPrefix ? `${idPrefix}_` : "") + table.metric.id}
+              tableRowAxis="dimension" // todo: dynamic grouping?
+              labelHeader={
+                renderMetricName ? (
+                  renderMetricName(table.metric)
+                ) : (
+                  <div style={{ marginBottom: 2 }}>
+                    {getRenderLabelColumn({
+                      statsEngine,
+                      hideDetails,
+                      experimentType,
+                      className: "",
+                    })({
+                      label: table.metric.name,
+                      metric: table.metric,
+                      row: table.rows[0],
+                    })}
+                  </div>
+                )
+              }
+              editMetrics={undefined}
               statsEngine={statsEngine}
               sequentialTestingEnabled={sequentialTestingEnabled}
               pValueCorrection={pValueCorrection}
-              {...risk}
+              differenceType={differenceType}
+              renderLabelColumn={({ label }) => (
+                <div
+                  className="pl-3 font-weight-bold"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitLineClamp: 1,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                    color: "var(--color-text-mid)",
+                  }}
+                >
+                  {label ? (
+                    label === "__NULL_DIMENSION" ? (
+                      <em>NULL (unset)</em>
+                    ) : (
+                      label
+                    )
+                  ) : (
+                    <em>unknown</em>
+                  )}
+                </div>
+              )}
+              metricFilter={metricFilter}
+              isTabActive={true}
+              isBandit={isBandit}
+              ssrPolyfills={ssrPolyfills}
+              noStickyHeader={noStickyHeader}
+              isHoldout={isHoldout}
+              sortBy={sortBy}
+              setSortBy={setSortBy}
+              sortDirection={sortDirection}
+              setSortDirection={setSortDirection}
             />
-          </div>
-        </div>
-      ))}
+            <div className="mb-5" />
+          </>
+        );
+      })}
     </div>
   );
 };

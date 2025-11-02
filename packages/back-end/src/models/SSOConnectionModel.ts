@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { SSOConnectionInterface } from "../../types/sso-connection";
+import { SSOConnectionInterface } from "back-end/types/sso-connection";
 
 const ssoConnectionSchema = new mongoose.Schema({
   id: {
@@ -25,9 +25,9 @@ const ssoConnectionSchema = new mongoose.Schema({
 
 type SSOConnectionDocument = mongoose.Document & SSOConnectionInterface;
 
-const SSOConnectionModel = mongoose.model<SSOConnectionDocument>(
+const SSOConnectionModel = mongoose.model<SSOConnectionInterface>(
   "SSOConnection",
-  ssoConnectionSchema
+  ssoConnectionSchema,
 );
 
 function toInterface(doc: SSOConnectionDocument): SSOConnectionInterface {
@@ -35,7 +35,7 @@ function toInterface(doc: SSOConnectionDocument): SSOConnectionInterface {
 }
 
 export async function getSSOConnectionById(
-  id: string
+  id: string,
 ): Promise<null | SSOConnectionInterface> {
   if (!id) return null;
   const doc = await SSOConnectionModel.findOne({ id });
@@ -43,8 +43,15 @@ export async function getSSOConnectionById(
   return doc ? toInterface(doc) : null;
 }
 
+export async function getAllSSOConnections(): Promise<
+  SSOConnectionInterface[]
+> {
+  const connections = await SSOConnectionModel.find();
+  return connections.map((c) => toInterface(c));
+}
+
 export async function getSSOConnectionByEmailDomain(
-  emailDomain: string
+  emailDomain: string,
 ): Promise<null | SSOConnectionInterface> {
   if (!emailDomain) return null;
   const doc = await SSOConnectionModel.findOne({
@@ -55,7 +62,7 @@ export async function getSSOConnectionByEmailDomain(
 }
 
 export function getSSOConnectionSummary(
-  conn?: SSOConnectionInterface
+  conn?: SSOConnectionInterface,
 ): Partial<SSOConnectionInterface> | null {
   if (!conn) {
     return null;

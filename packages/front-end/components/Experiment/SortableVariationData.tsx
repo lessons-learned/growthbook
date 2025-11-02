@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { forwardRef } from "react";
 import { FaArrowsAlt } from "react-icons/fa";
 import { MdDeleteForever } from "react-icons/md";
-import Field from "../Forms/Field";
+import Field from "@/components/Forms/Field";
 
 interface SortableProps {
   variation: Variation;
@@ -95,19 +95,14 @@ const Card = forwardRef<HTMLDivElement, VariationProps>(
         </div>
       </div>
     );
-  }
+  },
 );
 
 Card.displayName = "Card";
 
 export function SortableExperimentVariationCard(props) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({ id: props.variation.id });
+  const { attributes, listeners, setNodeRef, transform, transition } =
+    useSortable({ id: props.variation.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),

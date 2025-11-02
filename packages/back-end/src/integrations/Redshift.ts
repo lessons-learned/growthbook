@@ -1,17 +1,15 @@
-import { PostgresConnectionParams } from "../../types/integrations/postgres";
-import { decryptDataSourceParams } from "../services/datasource";
-import { runPostgresQuery } from "../services/postgres";
-import { FormatDialect } from "../util/sql";
+import { FormatDialect } from "shared/src/types";
+import { PostgresConnectionParams } from "back-end/types/integrations/postgres";
+import { decryptDataSourceParams } from "back-end/src/services/datasource";
+import { runPostgresQuery } from "back-end/src/services/postgres";
+import { QueryResponse } from "back-end/src/types/Integration";
 import SqlIntegration from "./SqlIntegration";
 
 export default class Redshift extends SqlIntegration {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
-  params: PostgresConnectionParams;
+  params!: PostgresConnectionParams;
   setParams(encryptedParams: string) {
-    this.params = decryptDataSourceParams<PostgresConnectionParams>(
-      encryptedParams
-    );
+    this.params =
+      decryptDataSourceParams<PostgresConnectionParams>(encryptedParams);
   }
   getFormatDialect(): FormatDialect {
     return "redshift";
@@ -19,7 +17,10 @@ export default class Redshift extends SqlIntegration {
   getSensitiveParamKeys(): string[] {
     return ["password", "caCert", "clientCert", "clientKey"];
   }
-  runQuery(sql: string) {
+  hasEfficientPercentile(): boolean {
+    return false;
+  }
+  runQuery(sql: string): Promise<QueryResponse> {
     return runPostgresQuery(this.params, sql);
   }
   getSchema(): string {
@@ -34,10 +35,30 @@ export default class Redshift extends SqlIntegration {
   ensureFloat(col: string): string {
     return `${col}::float`;
   }
-  getInformationSchemaFromClause(): string {
-    return "SVV_COLUMNS";
+  hasCountDistinctHLL(): boolean {
+    return true;
   }
-  getInformationSchemaTableFromClause(): string {
+  hllAggregate(col: string): string {
+    return `HLL_CREATE_SKETCH(${col})`;
+  }
+  hllReaggregate(col: string): string {
+    return `HLL_COMBINE(${col})`;
+  }
+  hllCardinality(col: string): string {
+    return `HLL_CARDINALITY(${col})`;
+  }
+  extractJSONField(jsonCol: string, path: string, isNumeric: boolean): string {
+    const raw = `JSON_EXTRACT_PATH_TEXT(${jsonCol}, ${path
+      .split(".")
+      .map((p) => `'${p}'`)
+      .join(", ")}, TRUE)`;
+    return isNumeric ? this.ensureFloat(raw) : raw;
+  }
+  approxQuantile(value: string, quantile: string | number): string {
+    // approx behaves differently in redshift
+    return `PERCENTILE_CONT(${quantile}) WITHIN GROUP (ORDER BY ${value})`;
+  }
+  getInformationSchemaTable(): string {
     return "SVV_COLUMNS";
   }
 }

@@ -1,20 +1,21 @@
 import { useUser } from "@/services/UserContext";
 
 export default function AccountPlanBadge() {
-  const { accountPlan } = useUser();
+  const { effectiveAccountPlan } = useUser();
 
   const badgeText =
-    accountPlan === "enterprise"
+    effectiveAccountPlan === "enterprise"
       ? "ENTERPRISE"
-      : accountPlan === "pro"
-      ? "PRO"
-      : accountPlan === "pro_sso"
-      ? "PRO + SSO"
-      : "";
+      : effectiveAccountPlan === "pro"
+        ? "PRO"
+        : effectiveAccountPlan === "pro_sso"
+          ? "PRO + SSO"
+          : "";
 
   if (!badgeText) return null;
 
-  const color = accountPlan === "enterprise" ? "badge-dark" : "badge-primary";
+  const color =
+    effectiveAccountPlan === "enterprise" ? "badge-dark" : "badge-primary";
 
   return <span className={`badge badge-pill ${color} mr-1`}>{badgeText}</span>;
 }

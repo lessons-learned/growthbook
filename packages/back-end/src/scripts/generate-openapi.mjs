@@ -21,7 +21,6 @@ async function run() {
   const spec = path.join(__dirname, "..", "..", "generated", "spec.yaml");
   const api = load(fs.readFileSync(spec));
   const dereferenced = await SwaggerParser.dereference(api);
-
   const validators = [];
 
   // Step 2: Convert to Typescript types
@@ -36,9 +35,18 @@ async function run() {
 
   // Step 3: Add additional named types for easier access
   // Export each schema as a named type
+  output += `import { z } from "zod";\n`;
+  output += `import * as openApiValidators from "back-end/src/validators/openapi";\n`;
   output += "\n// Schemas\n";
   Object.keys(api.components.schemas).forEach((k) => {
-    output += `export type Api${k} = components["schemas"]["${k}"];\n`;
+    // Zod validator for response body
+    validators.push(
+      `export const api${k}Validator = ${generateZodSchema(
+        api.components.schemas[k],
+      )}`,
+    );
+
+    output += `export type Api${k} = z.infer<typeof openApiValidators.api${k}Validator>;\n`;
   });
 
   // Export each API operation's response value as a named type
@@ -64,7 +72,7 @@ async function run() {
   bodySchema: ${generateZodSchema(requestSchema, false)},
   querySchema: ${generateZodSchema(querySchema)},
   paramsSchema: ${generateZodSchema(pathSchema)},
-};`
+};`,
         );
       }
     });
@@ -73,13 +81,13 @@ async function run() {
   // Step 4: Persist specs and generated files to file system
   fs.writeFileSync(
     path.join(__dirname, "..", "..", "types", "openapi.d.ts"),
-    output
+    output,
   );
   fs.writeFileSync(
     path.join(__dirname, "..", "..", "src", "validators", "openapi.ts"),
     generatedFileHeader +
       `import { z } from "zod";\n\n` +
-      validators.join("\n\n")
+      validators.join("\n\n"),
   );
 }
 
@@ -95,11 +103,19 @@ function generateZodSchema(jsonSchema, coerceStringsToNumbers = true) {
     return `z.never()`;
   }
 
-  let zod = parseSchema(jsonSchema) + ".strict()";
+  let zod = parseSchema(jsonSchema);
+
+  if (zod.startsWith("z.object")) {
+    zod += ".strict()";
+  }
 
   if (coerceStringsToNumbers) {
     zod = zod.replace(/z\.number\(\)/g, "z.coerce.number()");
   }
+
+  // remove overly strick datetime zod validation
+  // until we can write custom regex validator
+  zod = zod.replace(/(?<=string\(\))\.datetime\(\{.*?\}\)/g, "");
 
   return zod;
 }

@@ -1,10 +1,10 @@
 import type { Response } from "express";
-import { AuthRequest } from "../../types/AuthRequest";
-import { ApiErrorResponse } from "../../../types/api";
-import { getOrgFromReq } from "../../services/organizations";
-import { SlackIntegrationInterface } from "../../../types/slack-integration";
-import * as SlackIntegration from "../../models/SlackIntegrationModel";
-import { NotificationEventName } from "../../events/base-types";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
+import { ApiErrorResponse } from "back-end/types/api";
+import { getContextFromReq } from "back-end/src/services/organizations";
+import { SlackIntegrationInterface } from "back-end/types/slack-integration";
+import * as SlackIntegration from "back-end/src/models/SlackIntegrationModel";
+import { NotificationEventName } from "back-end/src/events/base-types";
 
 // region GET /integrations/slack
 
@@ -26,13 +26,17 @@ type GetSlackIntegrationsResponse = {
  */
 export const getSlackIntegrations = async (
   req: GetSlackIntegrationsRequest,
-  res: Response<GetSlackIntegrationsResponse | ApiErrorResponse>
+  res: Response<GetSlackIntegrationsResponse | ApiErrorResponse>,
 ) => {
-  req.checkPermissions("manageIntegrations");
+  const context = getContextFromReq(req);
 
-  const { org } = getOrgFromReq(req);
+  if (!context.permissions.canManageIntegrations()) {
+    context.permissions.throwPermissionError();
+  }
 
-  const slackIntegrations = await SlackIntegration.getSlackIntegrations(org.id);
+  const slackIntegrations = await SlackIntegration.getSlackIntegrations(
+    context.org.id,
+  );
 
   return res.json({
     slackIntegrations,
@@ -61,16 +65,19 @@ type GetSlackIntegrationResponse = {
  */
 export const getSlackIntegration = async (
   req: GetSlackIntegrationRequest,
-  res: Response<GetSlackIntegrationResponse | ApiErrorResponse>
+  res: Response<GetSlackIntegrationResponse | ApiErrorResponse>,
 ) => {
-  req.checkPermissions("manageIntegrations");
+  const context = getContextFromReq(req);
 
-  const { org } = getOrgFromReq(req);
+  if (!context.permissions.canManageIntegrations()) {
+    context.permissions.throwPermissionError();
+  }
+
   const { id } = req.params;
 
   const slackIntegration = await SlackIntegration.getSlackIntegration({
     slackIntegrationId: id,
-    organizationId: org.id,
+    organizationId: context.org.id,
   });
   if (!slackIntegration) {
     return res.status(404).json({ message: "Not found" });
@@ -109,11 +116,14 @@ type CreateSlackIntegrationResponse = {
  */
 export const postSlackIntegration = async (
   req: CreateSlackIntegrationRequest,
-  res: Response<CreateSlackIntegrationResponse | ApiErrorResponse>
+  res: Response<CreateSlackIntegrationResponse | ApiErrorResponse>,
 ) => {
-  req.checkPermissions("manageIntegrations");
+  const context = getContextFromReq(req);
 
-  const { org } = getOrgFromReq(req);
+  if (!context.permissions.canManageIntegrations()) {
+    context.permissions.throwPermissionError();
+  }
+
   const {
     name,
     events,
@@ -127,7 +137,7 @@ export const postSlackIntegration = async (
   } = req.body;
 
   const created = await SlackIntegration.createSlackIntegration({
-    organizationId: org.id,
+    organizationId: context.org.id,
     name,
     events,
     description,
@@ -174,11 +184,13 @@ type PutSlackIntegrationResponse = {
  */
 export const putSlackIntegration = async (
   req: PutSlackIntegrationRequest,
-  res: Response<PutSlackIntegrationResponse | ApiErrorResponse>
+  res: Response<PutSlackIntegrationResponse | ApiErrorResponse>,
 ) => {
-  req.checkPermissions("manageIntegrations");
+  const context = getContextFromReq(req);
 
-  const { org } = getOrgFromReq(req);
+  if (!context.permissions.canManageIntegrations()) {
+    context.permissions.throwPermissionError();
+  }
   const {
     name,
     events,
@@ -193,7 +205,7 @@ export const putSlackIntegration = async (
 
   const successful = await SlackIntegration.updateSlackIntegration(
     {
-      organizationId: org.id,
+      organizationId: context.org.id,
       slackIntegrationId: req.params.id,
     },
     {
@@ -206,7 +218,7 @@ export const putSlackIntegration = async (
       slackSigningKey,
       slackIncomingWebHook,
       tags,
-    }
+    },
   );
 
   const status = successful ? 200 : 404;
@@ -234,14 +246,15 @@ type DeleteSlackIntegrationResponse = {
  */
 export const deleteSlackIntegration = async (
   req: DeleteSlackIntegrationRequest,
-  res: Response<DeleteSlackIntegrationResponse | ApiErrorResponse>
+  res: Response<DeleteSlackIntegrationResponse | ApiErrorResponse>,
 ) => {
-  req.checkPermissions("manageIntegrations");
-
-  const { org } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  if (!context.permissions.canManageIntegrations()) {
+    context.permissions.throwPermissionError();
+  }
   const successful = await SlackIntegration.deleteSlackIntegration({
     slackIntegrationId: req.params.id,
-    organizationId: org.id,
+    organizationId: context.org.id,
   });
 
   const status = successful ? 200 : 404;

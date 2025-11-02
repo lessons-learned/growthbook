@@ -1,36 +1,39 @@
 import { Response } from "express";
-import { AuthRequest } from "../types/AuthRequest";
-import { DiscussionParentType } from "../../types/discussion";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
+import { DiscussionParentType } from "back-end/types/discussion";
 import {
   addComment,
   getDiscussionByParent,
   getLastNDiscussions,
-} from "../services/discussions";
-import { getFileUploadURL } from "../services/files";
-import { getOrgFromReq } from "../services/organizations";
+  getProjectsByParentId,
+} from "back-end/src/services/discussions";
+import { getContextFromReq } from "back-end/src/services/organizations";
 
 export async function postDiscussions(
   req: AuthRequest<
     { comment: string },
     { parentId: string; parentType: DiscussionParentType }
   >,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("addComments", "");
+  const context = getContextFromReq(req);
+  const { org, userId, email, userName } = context;
 
-  const { org, userId, email, userName } = getOrgFromReq(req);
   const { parentId, parentType } = req.params;
   const { comment } = req.body;
 
   try {
-    // TODO: validate that parentType and parentId are valid for this organization
+    const projects = await getProjectsByParentId(context, parentType, parentId);
 
+    if (!context.permissions.canAddComment(projects)) {
+      context.permissions.throwPermissionError();
+    }
     await addComment(
       org.id,
       parentType,
       parentId,
       { id: userId, email: email, name: userName },
-      comment
+      comment,
     );
     res.status(200).json({
       status: 200,
@@ -52,35 +55,44 @@ export async function deleteComment(
       index: string;
     }
   >,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("addComments", "");
-
-  const { org, userId } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org, userId } = context;
   const { parentId, parentType, index } = req.params;
 
-  const i = parseInt(index);
-
-  const discussion = await getDiscussionByParent(org.id, parentType, parentId);
-  if (!discussion) {
-    return res.status(404).json({
-      status: 404,
-      message: "Discussion not found",
-    });
-  }
-
-  const current = discussion.comments[parseInt(index)];
-  if (current && current?.userId !== userId) {
-    return res.status(403).json({
-      status: 403,
-      message: "Only the original author can delete a comment",
-    });
-  }
-
-  discussion.comments.splice(i, 1);
-  discussion.markModified("comments");
-
   try {
+    const projects = await getProjectsByParentId(context, parentType, parentId);
+
+    if (!context.permissions.canAddComment(projects)) {
+      context.permissions.throwPermissionError();
+    }
+
+    const i = parseInt(index);
+
+    const discussion = await getDiscussionByParent(
+      org.id,
+      parentType,
+      parentId,
+    );
+    if (!discussion) {
+      return res.status(404).json({
+        status: 404,
+        message: "Discussion not found",
+      });
+    }
+
+    const current = discussion.comments[parseInt(index)];
+    if (current && current?.userId !== userId) {
+      return res.status(403).json({
+        status: 403,
+        message: "Only the original author can delete a comment",
+      });
+    }
+
+    discussion.comments.splice(i, 1);
+    discussion.markModified("comments");
+
     await discussion.save();
     return res.status(200).json({
       status: 200,
@@ -102,38 +114,48 @@ export async function putComment(
       index: string;
     }
   >,
-  res: Response
+  res: Response,
 ) {
-  req.checkPermissions("addComments", "");
-
-  const { org, userId } = getOrgFromReq(req);
+  const context = getContextFromReq(req);
+  const { org, userId } = context;
   const { parentId, parentType, index } = req.params;
   const { comment } = req.body;
 
-  const i = parseInt(index);
-
-  const discussion = await getDiscussionByParent(org.id, parentType, parentId);
-  if (!discussion || !discussion.comments[i]) {
-    return res.status(404).json({
-      status: 404,
-      message: "Discussion not found",
-    });
-  }
-
-  const current = discussion.comments[i];
-  if (current.userId !== userId) {
-    return res.status(403).json({
-      status: 403,
-      message: "Only the original author can edit a comment",
-    });
-  }
-
-  current.content = comment;
-  current.edited = true;
-  discussion.dateUpdated = new Date();
-
-  discussion.markModified("comments");
   try {
+    const projects = await getProjectsByParentId(context, parentType, parentId);
+
+    if (!context.permissions.canAddComment(projects)) {
+      context.permissions.throwPermissionError();
+    }
+
+    const i = parseInt(index);
+
+    const discussion = await getDiscussionByParent(
+      org.id,
+      parentType,
+      parentId,
+    );
+    if (!discussion || !discussion.comments[i]) {
+      return res.status(404).json({
+        status: 404,
+        message: "Discussion not found",
+      });
+    }
+
+    const current = discussion.comments[i];
+    if (current.userId !== userId) {
+      return res.status(403).json({
+        status: 403,
+        message: "Only the original author can edit a comment",
+      });
+    }
+
+    current.content = comment;
+    current.edited = true;
+    discussion.dateUpdated = new Date();
+
+    discussion.markModified("comments");
+
     await discussion.save();
     return res.status(200).json({
       status: 200,
@@ -151,16 +173,16 @@ export async function getDiscussion(
     null,
     { parentId: string; parentType: DiscussionParentType }
   >,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const { org } = getContextFromReq(req);
   const { parentId, parentType } = req.params;
 
   try {
     const discussion = await getDiscussionByParent(
       org.id,
       parentType,
-      parentId
+      parentId,
     );
     res.status(200).json({
       status: 200,
@@ -176,9 +198,9 @@ export async function getDiscussion(
 
 export async function getRecentDiscussions(
   req: AuthRequest<null, { num: string }>,
-  res: Response
+  res: Response,
 ) {
-  const { org } = getOrgFromReq(req);
+  const { org } = getContextFromReq(req);
   const { num } = req.params;
   let intNum = parseInt(num);
   if (intNum > 100) intNum = 100;
@@ -221,26 +243,4 @@ export async function getRecentDiscussions(
       message: e.message,
     });
   }
-}
-
-export async function postImageUploadUrl(
-  req: AuthRequest<null, { filetype: string }>,
-  res: Response
-) {
-  req.checkPermissions("addComments", "");
-
-  const { org } = getOrgFromReq(req);
-  const { filetype } = req.params;
-
-  const now = new Date();
-  const { uploadURL, fileURL } = await getFileUploadURL(
-    filetype,
-    `${org.id}/${now.toISOString().substr(0, 7)}/`
-  );
-
-  res.status(200).json({
-    status: 200,
-    uploadURL,
-    fileURL,
-  });
 }

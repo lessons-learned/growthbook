@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { RealtimeUsageInterface } from "../../types/realtime";
+import { RealtimeUsageInterface } from "back-end/types/realtime";
 
 const realtimeUsageSchema = new mongoose.Schema({
   organization: String,
@@ -10,15 +10,16 @@ realtimeUsageSchema.index({ organization: 1, hour: 1 }, { unique: true });
 
 export type RealtimeUsageDocument = mongoose.Document & RealtimeUsageInterface;
 
-export const RealtimeUsageModel = mongoose.model<RealtimeUsageDocument>(
+export const RealtimeUsageModel = mongoose.model<RealtimeUsageInterface>(
   "RealtimeUsage",
-  realtimeUsageSchema
+  realtimeUsageSchema,
 );
 
 export async function getRealtimeUsageByHour(
   organization: string,
-  hour: string
+  hour: string,
 ): Promise<RealtimeUsageInterface | null> {
-  const realtimeDoc = await RealtimeUsageModel.findOne({ organization, hour });
-  return realtimeDoc ? realtimeDoc.toJSON() : null;
+  const realtimeDoc: RealtimeUsageDocument | null =
+    await RealtimeUsageModel.findOne({ organization, hour });
+  return realtimeDoc ? realtimeDoc.toJSON<RealtimeUsageDocument>() : null;
 }

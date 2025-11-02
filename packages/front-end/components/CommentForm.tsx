@@ -1,7 +1,7 @@
 import { FC, useState } from "react";
 import { DiscussionParentType } from "back-end/types/discussion";
 import { useForm } from "react-hook-form";
-import { useAuth } from "../services/auth";
+import { useAuth } from "@/services/auth";
 import LoadingOverlay from "./LoadingOverlay";
 import MarkdownInput from "./Markdown/MarkdownInput";
 
@@ -60,8 +60,7 @@ const CommentForm: FC<{
         autofocus={autofocus}
         cta={cta}
         onCancel={onCancel}
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'null' is not assignable to type 'string | un... Remove this comment to see the full error message
-        error={formError}
+        error={formError || ""}
       />
     </form>
   );

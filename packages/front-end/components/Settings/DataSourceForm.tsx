@@ -6,6 +6,7 @@ import {
   ReactElement,
 } from "react";
 import { DataSourceInterfaceWithParams } from "back-end/types/datasource";
+import { getDemoDatasourceProjectIdForOrganization } from "shared/demo-datasource";
 import { dataSourceConnections } from "@/services/eventSchema";
 import Button from "@/components/Button";
 import SelectField from "@/components/Forms/SelectField";
@@ -17,6 +18,12 @@ import track from "@/services/track";
 import Modal from "@/components/Modal";
 import ConnectionSettings from "@/components/Settings/ConnectionSettings";
 import { useDefinitions } from "@/services/DefinitionsContext";
+import { ensureAndReturn } from "@/types/utils";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import useProjectOptions from "@/hooks/useProjectOptions";
+import Tooltip from "@/components/Tooltip/Tooltip";
+import { useUser } from "@/services/UserContext";
+import EditSchemaOptions from "./EditSchemaOptions";
 
 const typeOptions = dataSourceConnections;
 
@@ -42,12 +49,35 @@ const DataSourceForm: FC<{
   secondaryCTA,
 }) => {
   const { projects } = useDefinitions();
+  const { organization } = useUser();
   const [dirty, setDirty] = useState(false);
   const [datasource, setDatasource] = useState<
-    Partial<DataSourceInterfaceWithParams>
-    // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'null' is not assignable to param... Remove this comment to see the full error message
-  >(null);
+    Partial<DataSourceInterfaceWithParams> | undefined
+  >();
   const [hasError, setHasError] = useState(false);
+  const permissionsUtil = usePermissionsUtil();
+
+  const isSampleData =
+    data.projects?.includes(
+      getDemoDatasourceProjectIdForOrganization(organization.id),
+    ) ?? false;
+
+  const permissionRequired = (project: string) => {
+    return existing
+      ? permissionsUtil.canUpdateDataSourceParams({
+          projects: [project],
+          type: datasource?.type,
+        })
+      : permissionsUtil.canCreateDataSource({
+          projects: [project],
+          type: datasource?.type,
+        });
+  };
+
+  const projectOptions = useProjectOptions(
+    permissionRequired,
+    datasource?.projects || [],
+  );
 
   useEffect(() => {
     track("View Datasource Form", {
@@ -81,13 +111,13 @@ const DataSourceForm: FC<{
       let id = data.id;
 
       // Update
-      if (data.id) {
+      if (id) {
         const res = await apiCall<{ status: number; message: string }>(
           `/datasource/${data.id}`,
           {
             method: "PUT",
             body: JSON.stringify(datasource),
-          }
+          },
         );
         if (res.status > 200) {
           throw new Error(res.message);
@@ -100,8 +130,10 @@ const DataSourceForm: FC<{
           body: JSON.stringify({
             ...datasource,
             settings: {
-              // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'PostgresConnectionParams | Athen... Remove this comment to see the full error message
-              ...getInitialSettings("custom", datasource.params),
+              ...getInitialSettings(
+                "custom",
+                ensureAndReturn(datasource.params),
+              ),
               ...(datasource.settings || {}),
             },
           }),
@@ -114,7 +146,6 @@ const DataSourceForm: FC<{
       }
 
       setDirty(false);
-      // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
       await onSuccess(id);
     } catch (e) {
       track("Data Source Form Error", {
@@ -128,7 +159,7 @@ const DataSourceForm: FC<{
   };
 
   const onChange: ChangeEventHandler<HTMLInputElement | HTMLTextAreaElement> = (
-    e
+    e,
   ) => {
     setDatasource({
       ...datasource,
@@ -146,6 +177,7 @@ const DataSourceForm: FC<{
 
   return (
     <Modal
+      trackingEventModalType=""
       inline={inline}
       open={true}
       submit={handleSubmit}
@@ -154,6 +186,12 @@ const DataSourceForm: FC<{
       cta={cta}
       size="lg"
       secondaryCTA={secondaryCTA}
+      ctaEnabled={!isSampleData}
+      disabledMessage={
+        isSampleData
+          ? "You cannot edit the sample data source connection."
+          : undefined
+      }
     >
       {importSampleData && !datasource.type && (
         <div className="alert alert-info">
@@ -180,8 +218,7 @@ const DataSourceForm: FC<{
       )}
       <SelectField
         label="Data Source Type"
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-        value={datasource.type}
+        value={datasource.type || typeOptions[0].type}
         onChange={(value) => {
           const option = typeOptions.filter((o) => o.type === value)[0];
           if (!option) return;
@@ -239,21 +276,34 @@ const DataSourceForm: FC<{
       {projects?.length > 0 && (
         <div className="form-group">
           <MultiSelectField
-            label="Projects"
+            label={
+              <>
+                Projects{" "}
+                <Tooltip
+                  body={`The dropdown below has been filtered to only include projects where you have permission to ${
+                    existing ? "update" : "create"
+                  } Data Sources.`}
+                />
+              </>
+            }
             placeholder="All projects"
             value={datasource.projects || []}
-            options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            options={projectOptions}
             onChange={(v) => onManualChange("projects", v)}
             customClassName="label-overflow-ellipsis"
             helpText="Assign this data source to specific projects"
           />
         </div>
       )}
-      {/* @ts-expect-error TS(2786) If you come across this, please fix it!: 'ConnectionSettings' cannot be used as a JSX compo... Remove this comment to see the full error message */}
       <ConnectionSettings
         datasource={datasource}
         existing={existing}
         hasError={hasError}
+        setDatasource={setDatasource}
+        setDirty={setDirty}
+      />
+      <EditSchemaOptions
+        datasource={datasource}
         setDatasource={setDatasource}
         setDirty={setDirty}
       />

@@ -5,61 +5,33 @@ import {
   isValidElement,
   cloneElement,
   ReactNode,
+  ReactElement,
 } from "react";
 import clsx from "clsx";
-import Modal from "./Modal";
-import DeleteButton from "./DeleteButton/DeleteButton";
 
 const Carousel: FC<{
-  deleteImage?: (i: number) => Promise<void>;
   children: ReactNode;
-}> = ({ children, deleteImage }) => {
+  maxChildHeight?: number;
+  onClick?: (i: number) => void;
+}> = ({ children, maxChildHeight, onClick }) => {
   const [active, setActive] = useState(0);
-  const [modalOpen, setModalOpen] = useState(false);
 
   const num = Children.count(children);
+  if (maxChildHeight) {
+    children = Children.map(children, (child) => {
+      return cloneElement(child as ReactElement, {
+        style: {
+          ...(child as ReactElement).props.style,
+          maxHeight: maxChildHeight,
+        },
+      });
+    });
+  }
 
   const current = active >= num ? num - 1 : active;
 
-  let currentChild = null;
-  if (modalOpen) {
-    const orig = Children.toArray(children)[current];
-    if (orig && isValidElement(orig)) {
-      // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'ReactElement<any, string | JSXElementConstru... Remove this comment to see the full error message
-      currentChild = cloneElement(orig, {
-        style: { ...orig.props.style, height: "100%" },
-      });
-    }
-  }
-
   return (
     <div className="carousel slide my-2">
-      {modalOpen && currentChild && (
-        <Modal
-          open={true}
-          header={"Screenshot"}
-          close={() => setModalOpen(false)}
-          size="max"
-          sizeY="max"
-        >
-          {currentChild}
-          {deleteImage && (
-            <DeleteButton
-              displayName="Screenshot"
-              onClick={async () => {
-                await deleteImage(current);
-                setModalOpen(false);
-              }}
-              outline={true}
-              style={{
-                position: "absolute",
-                top: 20,
-                right: 20,
-              }}
-            />
-          )}
-        </Modal>
-      )}
       <div className="carousel-inner">
         {Children.map(children, (child, i) => {
           if (!isValidElement(child)) return null;
@@ -68,7 +40,9 @@ const Carousel: FC<{
               className={clsx("carousel-item cursor-pointer", {
                 active: i === current,
               })}
-              onClick={() => setModalOpen(true)}
+              onClick={() => {
+                if (onClick) onClick(i);
+              }}
               key={i}
             >
               {child}
@@ -79,9 +53,7 @@ const Carousel: FC<{
       {current > 0 ? (
         <a
           className="carousel-control-prev"
-          href="#"
           role="button"
-          style={{ backgroundColor: "rgba(68,68,68,.4)" }}
           onClick={(e) => {
             e.preventDefault();
             setActive((current + num - 1) % num);
@@ -99,9 +71,7 @@ const Carousel: FC<{
       {current < num - 1 ? (
         <a
           className="carousel-control-next"
-          href="#"
           role="button"
-          style={{ backgroundColor: "rgba(68,68,68,.4)" }}
           onClick={(e) => {
             e.preventDefault();
             setActive((current + 1) % num);

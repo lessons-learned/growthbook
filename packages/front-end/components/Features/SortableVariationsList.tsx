@@ -20,19 +20,21 @@ import { SortableVariation } from "./SortableFeatureVariationRow";
 const SortableVariationsList: FC<{
   children: ReactNode;
   variations: (SortableVariation | Variation)[];
-  setVariations: (variations: (SortableVariation | Variation)[]) => void;
+  setVariations?: (variations: (SortableVariation | Variation)[]) => void;
+  valuesAsIds?: boolean;
   sortingStrategy?: "vertical" | "rect";
 }> = ({
   children,
   variations,
   setVariations,
+  valuesAsIds = false,
   sortingStrategy = "vertical",
 }) => {
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    })
+    }),
   );
 
   function getVariationIndex(id: string) {
@@ -47,19 +49,23 @@ const SortableVariationsList: FC<{
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragEnd={({ active, over }) => {
-        // @ts-expect-error TS(2531) If you come across this, please fix it!: Object is possibly 'null'.
-        if (active.id !== over.id) {
+        if (!setVariations) return;
+
+        if (over && active.id !== over.id) {
           const oldIndex = getVariationIndex(active.id);
-          // @ts-expect-error TS(2531) If you come across this, please fix it!: Object is possibly 'null'.
           const newIndex = getVariationIndex(over.id);
 
           if (oldIndex === -1 || newIndex === -1) return;
 
-          const newVariations = arrayMove<SortableVariation | Variation>(
-            variations,
-            oldIndex,
-            newIndex
-          );
+          const newVariations = arrayMove<
+            SortableVariation | (Variation & { value?: string })
+          >(variations, oldIndex, newIndex);
+          if (valuesAsIds) {
+            newVariations.forEach((variation, i) => {
+              if (variation.value === undefined) return;
+              variation.value = i + "";
+            });
+          }
 
           setVariations(newVariations);
         }

@@ -1,10 +1,10 @@
 import { ExperimentPhaseStringDates } from "back-end/types/experiment";
 import { useState } from "react";
 import { FaCaretDown, FaCaretRight } from "react-icons/fa";
-import { date } from "shared";
+import { date } from "shared/dates";
 import { phaseSummary } from "@/services/utils";
-import ConditionDisplay from "../Features/ConditionDisplay";
-import { GBEdit } from "../Icons";
+import ConditionDisplay from "@/components/Features/ConditionDisplay";
+import { GBEdit } from "@/components/Icons";
 
 export interface Props {
   i: number;
@@ -22,13 +22,13 @@ export default function ExpandablePhaseSummary({ i, phase, editPhase }: Props) {
 
   const hasNamespace = phase.namespace && phase.namespace.enabled;
   const namespaceRange = hasNamespace
-    ? phase.namespace.range[1] - phase.namespace.range[0]
+    ? phase.namespace!.range[1] - phase.namespace!.range[0]
     : 1;
 
   return (
     <div className={i ? "border-top" : ""}>
       <a
-        className="d-flex text-dark p-3"
+        className={`d-flex text-dark ${i ? "pt-3" : ""} px-3 pb-3`}
         href="#"
         onClick={(e) => {
           e.preventDefault();
@@ -39,8 +39,10 @@ export default function ExpandablePhaseSummary({ i, phase, editPhase }: Props) {
         <div className="small">
           <div style={{ fontSize: "1.2em" }}>{phase.name}</div>
           <div>
-            <strong>{date(phase.dateStarted ?? "")}</strong> to{" "}
-            <strong>{phase.dateEnded ? date(phase.dateEnded) : "now"}</strong>
+            <strong>{date(phase.dateStarted ?? "", "UTC")}</strong> to{" "}
+            <strong>
+              {phase.dateEnded ? date(phase.dateEnded, "UTC") : "now"}
+            </strong>
           </div>
         </div>
         <div className="ml-auto">
@@ -87,8 +89,8 @@ export default function ExpandablePhaseSummary({ i, phase, editPhase }: Props) {
               <th className="small">Namespace</th>
               <td>
                 {hasNamespace ? (
-                  `${phase.namespace.name} (${percentFormatter.format(
-                    namespaceRange
+                  `${phase.namespace!.name} (${percentFormatter.format(
+                    namespaceRange,
                   )})`
                 ) : (
                   <em>none</em>

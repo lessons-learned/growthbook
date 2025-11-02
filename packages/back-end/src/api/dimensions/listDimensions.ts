@@ -1,14 +1,14 @@
-import { ListDimensionsResponse } from "../../../types/openapi";
+import { ListDimensionsResponse } from "back-end/types/openapi";
 import {
   findDimensionsByOrganization,
   toDimensionApiInterface,
-} from "../../models/DimensionModel";
+} from "back-end/src/models/DimensionModel";
 import {
   applyFilter,
   applyPagination,
   createApiRequestHandler,
-} from "../../util/handler";
-import { listDimensionsValidator } from "../../validators/openapi";
+} from "back-end/src/util/handler";
+import { listDimensionsValidator } from "back-end/src/validators/openapi";
 
 export const listDimensions = createApiRequestHandler(listDimensionsValidator)(
   async (req): Promise<ListDimensionsResponse> => {
@@ -18,17 +18,17 @@ export const listDimensions = createApiRequestHandler(listDimensionsValidator)(
     const { filtered, returnFields } = applyPagination(
       dimensions
         .filter((dimension) =>
-          applyFilter(req.query.datasourceId, dimension.datasource)
+          applyFilter(req.query.datasourceId, dimension.datasource),
         )
         .sort((a, b) => a.id.localeCompare(b.id)),
-      req.query
+      req.query,
     );
 
     return {
       dimensions: filtered.map((dimension) =>
-        toDimensionApiInterface(dimension)
+        toDimensionApiInterface(dimension),
       ),
       ...returnFields,
     };
-  }
+  },
 );

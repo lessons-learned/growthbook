@@ -1,22 +1,24 @@
-import React, { FC, Fragment, useState } from "react";
+import React, { FC, Fragment, ReactElement, useState } from "react";
 import { FaPencilAlt } from "react-icons/fa";
 import { SegmentInterface } from "back-end/types/segment";
 import { IdeaInterface } from "back-end/types/idea";
 import { MetricInterface } from "back-end/types/metric";
 import Link from "next/link";
 import clsx from "clsx";
-import { ago } from "shared";
+import { ago } from "shared/dates";
 import LoadingOverlay from "@/components/LoadingOverlay";
-import Button from "@/components/Button";
+import Button from "@/ui/Button";
 import SegmentForm from "@/components/Segments/SegmentForm";
 import { useDefinitions } from "@/services/DefinitionsContext";
 import DeleteButton from "@/components/DeleteButton/DeleteButton";
 import { useAuth } from "@/services/auth";
-import { GBAddCircle } from "@/components/Icons";
-import usePermissions from "@/hooks/usePermissions";
-import Code, { Language } from "@/components/SyntaxHighlighting/Code";
 import { hasFileConfig, storeSegmentsInMongo } from "@/services/env";
 import { DocLink } from "@/components/DocLink";
+import Tooltip from "@/components/Tooltip/Tooltip";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
+import MoreMenu from "@/components/Dropdown/MoreMenu";
+import ProjectBadges from "@/components/ProjectBadges";
+import { OfficialBadge } from "@/components/Metrics/MetricName";
 
 const SegmentPage: FC = () => {
   const {
@@ -26,25 +28,22 @@ const SegmentPage: FC = () => {
     datasources,
     error: segmentsError,
     mutateDefinitions: mutate,
+    project,
   } = useDefinitions();
 
-  const permissions = usePermissions();
+  const permissionsUtil = usePermissionsUtil();
 
-  function canAddEditRemoveSegments(): boolean {
-    if (!permissions.createSegments) {
-      return false;
-    }
+  const hasCreatePermission = permissionsUtil.canCreateSegment({
+    projects: [project],
+  });
+  let canStoreSegmentsInMongo = false;
 
-    if (hasFileConfig() && !storeSegmentsInMongo()) {
-      return false;
-    }
-    return true;
+  if (!hasFileConfig() || (hasFileConfig() && storeSegmentsInMongo())) {
+    canStoreSegmentsInMongo = true;
   }
 
-  const [
-    segmentForm,
-    setSegmentForm,
-  ] = useState<null | Partial<SegmentInterface>>(null);
+  const [segmentForm, setSegmentForm] =
+    useState<null | Partial<SegmentInterface>>(null);
 
   const { apiCall } = useAuth();
 
@@ -53,7 +52,7 @@ const SegmentPage: FC = () => {
   }
 
   const getSegmentUsage = (s: SegmentInterface) => {
-    return async () => {
+    return async (): Promise<ReactElement | null> => {
       try {
         const res = await apiCall<{
           status: number;
@@ -65,65 +64,43 @@ const SegmentPage: FC = () => {
           method: "GET",
         });
 
-        const metricLinks = [];
-        const ideaLinks = [];
-        const expLinks = [];
+        const metricLinks: (ReactElement | string)[] = [];
+        const ideaLinks: (ReactElement | string)[] = [];
+        const expLinks: (ReactElement | string)[] = [];
         let subtitleText = "This segment is not referenced anywhere else.";
         if (res.total) {
           subtitleText = "This segment is referenced in ";
-          const refs = [];
-          // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-          if (res.metrics.length) {
+          const refs: (ReactElement | string)[] = [];
+          if (res.metrics && res.metrics.length) {
             refs.push(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
               res.metrics.length === 1
                 ? "1 metric"
-                : // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-                  res.metrics.length + " metrics"
+                : res.metrics.length + " metrics",
             );
-            // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
             res.metrics.forEach((m) => {
               metricLinks.push(
-                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Element' is not assignable to pa... Remove this comment to see the full error message
-                <Link href={`/metric/${m.id}`}>
-                  <a className="">{m.name}</a>
-                </Link>
+                <Link href={`/metric/${m.id}`} className="">
+                  {m.name}
+                </Link>,
               );
             });
           }
-          // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-          if (res.ideas.length) {
+          if (res.ideas && res.ideas.length) {
             refs.push(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-              res.ideas.length === 1 ? "1 idea" : res.ideas.length + " ideas"
+              res.ideas.length === 1 ? "1 idea" : res.ideas.length + " ideas",
             );
-            // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
             res.ideas.forEach((i) => {
-              ideaLinks.push(
-                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Element' is not assignable to pa... Remove this comment to see the full error message
-                <Link href={`/idea/${i.id}`}>
-                  <a>{i.text}</a>
-                </Link>
-              );
+              ideaLinks.push(<Link href={`/idea/${i.id}`}>{i.text}</Link>);
             });
           }
-          // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-          if (res.experiments.length) {
+          if (res.experiments && res.experiments.length) {
             refs.push(
-              // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
               res.experiments.length === 1
                 ? "1 experiment"
-                : // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-                  res.experiments.length + " Experiments"
+                : res.experiments.length + " Experiments",
             );
-            // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
             res.experiments.forEach((e) => {
-              expLinks.push(
-                // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Element' is not assignable to pa... Remove this comment to see the full error message
-                <Link href={`/experiment/${e.id}`}>
-                  <a>{e.name}</a>
-                </Link>
-              );
+              expLinks.push(<Link href={`/experiment/${e.id}`}>{e.name}</Link>);
             });
           }
           subtitleText += refs.join(" and ");
@@ -197,11 +174,12 @@ const SegmentPage: FC = () => {
           </div>
         );
       }
+      return null;
     };
   };
 
   const hasValidDataSources = !!datasources.filter(
-    (d) => d.properties?.segments
+    (d) => d.properties?.segments,
   )[0];
 
   if (!hasValidDataSources) {
@@ -232,18 +210,14 @@ const SegmentPage: FC = () => {
           <h1>Segments</h1>
         </div>
         <div style={{ flex: 1 }}></div>
-        {canAddEditRemoveSegments() && (
+        {hasCreatePermission && canStoreSegmentsInMongo && (
           <div className="col-auto">
             <Button
-              color="primary"
-              onClick={async () => {
+              onClick={() => {
                 setSegmentForm({});
               }}
             >
-              <span className="h4 pr-2 m-0 d-inline-block align-top">
-                <GBAddCircle />
-              </span>{" "}
-              New Segment
+              Add Segment
             </Button>
           </div>
         )}
@@ -270,91 +244,115 @@ const SegmentPage: FC = () => {
                 <tr>
                   <th>Name</th>
                   <th>Owner</th>
+                  <th>Projects</th>
                   <th className="d-none d-sm-table-cell">Data Source</th>
                   <th className="d-none d-md-table-cell">Identifier Type</th>
-                  <th className="d-none d-lg-table-cell">Definition</th>
-                  {canAddEditRemoveSegments() && <th>Date Updated</th>}
-                  {canAddEditRemoveSegments() && <th></th>}
+                  <th>Date Updated</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {segments.map((s) => {
                   const datasource = getDatasourceById(s.datasource);
-                  const language: Language =
-                    datasource?.properties?.queryLanguage || "sql";
+                  const userIdType = datasource?.properties?.userIds
+                    ? s.userIdType || "user_id"
+                    : "";
                   return (
                     <tr key={s.id}>
-                      <td>{s.name}</td>
+                      <td>
+                        <>
+                          <OfficialBadge
+                            type="Segment"
+                            managedBy={s.managedBy}
+                          />
+                          {s.name}{" "}
+                          {s.description ? (
+                            <Tooltip body={s.description} />
+                          ) : null}
+                        </>
+                      </td>
                       <td>{s.owner}</td>
+                      <td className="col-2">
+                        {s && (s.projects || []).length > 0 ? (
+                          <ProjectBadges
+                            resourceType="segment"
+                            projectIds={s.projects}
+                          />
+                        ) : (
+                          <ProjectBadges resourceType="segment" />
+                        )}
+                      </td>
                       <td className="d-none d-sm-table-cell">
                         {datasource && (
                           <>
-                            <div>
-                              <Link href={`/datasources/${datasource?.id}`}>
-                                {datasource?.name}
-                              </Link>
-                            </div>
-                            <div
-                              className="text-gray font-weight-normal small text-ellipsis"
-                              style={{ maxWidth: 350 }}
-                            >
-                              {datasource?.description}
-                            </div>
+                            <Link href={`/datasources/${datasource.id}`}>
+                              {datasource.name}
+                            </Link>{" "}
+                            {datasource.description ? (
+                              <Tooltip body={datasource.description} />
+                            ) : null}
                           </>
                         )}
                       </td>
                       <td className="d-none d-md-table-cell">
-                        {datasource?.properties?.userIds
-                          ? s.userIdType || "user_id"
-                          : ""}
+                        <span
+                          className="badge badge-secondary mr-1"
+                          key={`${s.id}-${userIdType}`}
+                        >
+                          {userIdType}
+                        </span>
                       </td>
-                      <td
-                        className="d-none d-lg-table-cell"
-                        style={{ maxWidth: "30em" }}
-                      >
-                        <Code
-                          code={s.sql}
-                          language={language}
-                          expandable={true}
-                        />
+                      <td>
+                        {s.managedBy !== "config" ? (
+                          <>{ago(s.dateUpdated)}</>
+                        ) : (
+                          <>-</>
+                        )}
                       </td>
-                      {canAddEditRemoveSegments() && (
-                        // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'Date | null' is not assignable t... Remove this comment to see the full error message
-                        <td>{ago(s.dateUpdated)}</td>
-                      )}
-                      {canAddEditRemoveSegments() && (
-                        <td>
-                          <a
-                            href="#"
-                            className="tr-hover text-primary mr-3"
-                            title="Edit this segment"
+                      <td>
+                        <MoreMenu>
+                          {/* If the user has permission & the segment isn't externally managed, show edit icon,
+                          otherwise the cta should be `View Details`. This is because Segment's don't have an id page,
+                         in order for the user to see the sql that powers the segment, we need to show the edit form, but in read only mode */}
+                          <button
+                            className="dropdown-item"
                             onClick={(e) => {
                               e.preventDefault();
                               setSegmentForm(s);
                             }}
                           >
-                            <FaPencilAlt />
-                          </a>
-                          <DeleteButton
-                            link={true}
-                            className={"tr-hover text-primary"}
-                            displayName={s.name}
-                            title="Delete this segment"
-                            // @ts-expect-error TS(2322) If you come across this, please fix it!: Type '() => Promise<JSX.Element | undefined>' is n... Remove this comment to see the full error message
-                            getConfirmationContent={getSegmentUsage(s)}
-                            onClick={async () => {
-                              await apiCall<{
-                                status: number;
-                                message?: string;
-                              }>(`/segments/${s.id}`, {
-                                method: "DELETE",
-                                body: JSON.stringify({ id: s.id }),
-                              });
-                              await mutate({});
-                            }}
-                          />
-                        </td>
-                      )}
+                            {permissionsUtil.canUpdateSegment(s, {}) &&
+                            !s.managedBy ? (
+                              <>
+                                <FaPencilAlt /> Edit
+                              </>
+                            ) : (
+                              <>View Details</>
+                            )}
+                          </button>
+                          {permissionsUtil.canDeleteSegment(s) &&
+                          canStoreSegmentsInMongo &&
+                          // if the segment has a managedBy value, it can't be deleted in the UI
+                          !s.managedBy ? (
+                            <DeleteButton
+                              className="dropdown-item"
+                              displayName={s.name}
+                              text="Delete"
+                              getConfirmationContent={getSegmentUsage(s)}
+                              onClick={async () => {
+                                await apiCall<{
+                                  status: number;
+                                  message?: string;
+                                }>(`/segments/${s.id}`, {
+                                  method: "DELETE",
+                                  body: JSON.stringify({ id: s.id }),
+                                });
+                                await mutate({});
+                              }}
+                            />
+                          ) : null}
+                        </MoreMenu>
+                      </td>
                     </tr>
                   );
                 })}
@@ -366,7 +364,7 @@ const SegmentPage: FC = () => {
       {segments.length === 0 && !hasFileConfig() && (
         <div className="alert alert-info">
           You don&apos;t have any segments defined yet.{" "}
-          {permissions.createSegments &&
+          {hasCreatePermission &&
             "Click the button above to create your first one."}
         </div>
       )}
@@ -375,7 +373,7 @@ const SegmentPage: FC = () => {
           You don&apos;t have any segments defined yet. You can add them to your{" "}
           <code>config.yml</code> file and remove the{" "}
           <code>STORE_SEGMENTS_IN_MONGO</code> environment variable
-          {permissions.createSegments &&
+          {hasCreatePermission &&
             " or click the button above to create your first one"}
           . <DocLink docSection="config_yml">View Documentation</DocLink>
         </div>

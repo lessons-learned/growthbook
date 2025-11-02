@@ -11,6 +11,7 @@ declare module "presto-client" {
       secureProtocol: string;
       pfx?: string;
       rejectUnauthorized?: boolean;
+      servername?: string;
     };
     port: number;
     source: string;
@@ -21,15 +22,25 @@ declare module "presto-client" {
       user: string;
       password: string;
     };
+    custom_auth?: string;
     schema?: string;
     enableVerboseStateCallback?: boolean;
+    jsonParser?: {
+      parse: (data: any) => any;
+    };
+    engine?: string;
+    timeout?: number;
   }
 
   enum PrestoClientQueryStates {
+    WAITING_FOR_PREREQUISITES = "WAITING_FOR_PREREQUISITES",
     QUEUED = "QUEUED",
+    WAITING_FOR_RESOURCES = "WAITING_FOR_RESOURCES",
+    DISPATCHING = "DISPATCHING",
     PLANNING = "PLANNING",
     STARTING = "STARTING",
     RUNNING = "RUNNING",
+    FINISHING = "FINISHING",
     FINISHED = "FINISHED",
     CANCELED = "CANCELED",
     FAILED = "FAILED",
@@ -73,6 +84,9 @@ declare module "presto-client" {
     catalog: string;
     schema: string;
     timezone?: string;
+    user?: string;
+    prepares?: string[];
+    timeout?: null | number;
     info?: boolean;
     cancel?: () => boolean;
     state?: (error: any, query_id: string, stats: IPrestoClientStats) => void;
@@ -81,10 +95,11 @@ declare module "presto-client" {
       error: any,
       data: PrestoClientColumnDatum[],
       columns: IPrestoClientColumnMetaData[],
-      stats: IPrestoClientStats
+      stats: IPrestoClientStats,
     ) => void;
     success?: (error: any, stats: IPrestoClientStats) => void;
     error?: (error: any) => void;
+    callback?: (error: any, stats: IPrestoClientStats) => void;
   }
 
   class Client {
@@ -92,12 +107,12 @@ declare module "presto-client" {
     public execute(options: IPrestoClientExecuteOptions): void;
     public query(
       query_id: string,
-      callback: (error: any, data?: any) => void
+      callback: (error: any, data?: any) => void,
     ): void;
     public kill(query_id: string, callback: (error: any) => void): void;
     public nodes(
       opts: null | undefined | {},
-      callback: (error: any, data: {}[]) => void
+      callback: (error: any, data: {}[]) => void,
     ): void;
   }
 }

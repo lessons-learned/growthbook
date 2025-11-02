@@ -1,14 +1,17 @@
 import { FC, useState } from "react";
 import { AuditInterface } from "back-end/types/audit";
-import useApi from "../hooks/useApi";
-import LoadingOverlay from "../components/LoadingOverlay";
-import { HistoryTableRow } from "../components/HistoryTable";
+import useApi from "@/hooks/useApi";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import { HistoryTableRow } from "@/components/HistoryTable";
+import track from "@/services/track";
 
 const Activity: FC = () => {
   const { data, error } = useApi<{
     events: AuditInterface[];
     experiments: { id: string; name: string }[];
   }>("/activity");
+
+  track("Viewed Activity Page");
 
   const [open, setOpen] = useState("");
 
@@ -51,9 +54,10 @@ const Activity: FC = () => {
                 }}
                 showName={true}
                 showType={true}
-                // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string | false | undefined' is not assignabl... Remove this comment to see the full error message
                 itemName={
-                  nameMap.has(event.entity.id) && nameMap.get(event.entity.id)
+                  nameMap.has(event.entity.id)
+                    ? nameMap.get(event.entity.id)
+                    : undefined
                 }
                 url={
                   event.entity.object === "feature"

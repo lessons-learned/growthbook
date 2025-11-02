@@ -1,26 +1,29 @@
 import { ReactNode } from "react";
-import { UseFormReturn } from "react-hook-form";
 import { StatsEngine } from "back-end/types/stats";
-import { ProjectSettings } from "back-end/types/project";
-import { OrganizationSettings } from "back-end/types/organization";
-import { ScopedSettings } from "shared";
+import { ScopedSettings } from "shared/settings";
 import SelectField from "@/components/Forms/SelectField";
 import { capitalizeFirstLetter } from "@/services/utils";
 
 export default function StatsEngineSelect({
-  form,
   parentSettings,
   showDefault = true,
   allowUndefined = true,
   label = "Statistics Engine",
+  className = "w-200px",
+  value,
   onChange,
+  labelClassName = "mr-2",
+  disabled,
 }: {
-  form: UseFormReturn<OrganizationSettings | ProjectSettings>;
+  value?: StatsEngine;
   parentSettings?: ScopedSettings;
   showDefault?: boolean;
   allowUndefined?: boolean;
   label?: ReactNode;
+  className?: string;
   onChange?: (v: StatsEngine) => void;
+  labelClassName?: string;
+  disabled?: boolean;
 }) {
   const parentScopeId = parentSettings?.statsEngine?.meta?.scopeApplied;
   const options = [
@@ -38,23 +41,21 @@ export default function StatsEngineSelect({
       label: parentScopeId
         ? capitalizeFirstLetter(parentScopeId) + " default"
         : "Default",
-      // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'null' is not assignable to type 'string'.
-      value: null,
+      value: "",
     });
   }
 
   return (
     <SelectField
       label={label}
-      className="w-200px"
+      className={className}
       containerClassName="mb-3"
-      labelClassName="font-weight-bold text-muted mr-2"
+      labelClassName={labelClassName}
       sort={false}
       options={options}
-      value={form.watch("statsEngine") ?? options[0].value}
+      value={value ?? options[0].value}
       onChange={(v) => {
         onChange?.(v as StatsEngine);
-        form.setValue("statsEngine", (v as StatsEngine) || undefined);
       }}
       helpText={
         showDefault &&
@@ -71,6 +72,7 @@ export default function StatsEngineSelect({
         }
         return label;
       }}
+      disabled={disabled}
     />
   );
 }

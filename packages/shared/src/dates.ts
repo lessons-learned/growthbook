@@ -1,15 +1,31 @@
 import format from "date-fns/format";
 import formatDistance from "date-fns/formatDistance";
 import differenceInDays from "date-fns/differenceInDays";
+import differenceInHours from "date-fns/differenceInHours";
 import addMonths from "date-fns/addMonths";
+import formatRelative from "date-fns/formatRelative";
+import previousMonday from "date-fns/previousMonday";
+import { formatInTimeZone } from "date-fns-tz";
 
-export function date(date: string | Date): string {
+export function date(date: string | Date, inTimezone?: string): string {
   if (!date) return "";
-  return format(getValidDate(date), "PP");
+  const d = getValidDate(date);
+  const formatStr = "PP";
+  return inTimezone
+    ? formatInTimeZone(d, inTimezone, formatStr)
+    : format(d, formatStr);
 }
-export function datetime(date: string | Date): string {
+export function datetime(date: string | Date, inTimezone?: string): string {
   if (!date) return "";
-  return format(getValidDate(date), "PPp");
+  const d = getValidDate(date);
+  const formatStr = "PPp";
+  return inTimezone
+    ? formatInTimeZone(d, inTimezone, formatStr)
+    : format(d, formatStr);
+}
+export function relativeDate(date: string | Date): string {
+  if (!date) return "";
+  return formatRelative(getValidDate(date), new Date());
 }
 export function ago(date: string | Date): string {
   if (!date) return "";
@@ -27,10 +43,39 @@ export function monthYear(date: string | Date): string {
 export function daysBetween(start: string | Date, end: string | Date): number {
   return differenceInDays(getValidDate(end), getValidDate(start));
 }
+export function hoursBetween(start: string | Date, end: string | Date): number {
+  return differenceInHours(getValidDate(end), getValidDate(start));
+}
+
+// gets the previous monday as a string date (for "weeks").
+// if date is a monday, returns itself
+export function lastMondayString(dateString: string): string {
+  const lastMonday = previousMonday(getValidDate(dateString));
+  return lastMonday.toISOString().substring(0, 10);
+}
+
+// returns of the format ["'2022-01-05'", "'2022-01-06'"] for
+// ease of use with SQL
+export function dateStringArrayBetweenDates(
+  start: Date,
+  end: Date,
+  truncate: boolean = true,
+  dayInterval: number = 1,
+): string[] {
+  const dateArray: string[] = [];
+  let startTruncate = new Date(start);
+  if (truncate) {
+    startTruncate = new Date(start.toISOString().substring(0, 10));
+  }
+  for (let d = startTruncate; d <= end; d.setDate(d.getDate() + dayInterval)) {
+    dateArray.push(`'${d.toISOString().substring(0, 10)}'`);
+  }
+  return dateArray;
+}
 
 export function getValidDate(
-  dateStr: string | Date | null | number,
-  fallback?: Date
+  dateStr: string | Date | null | number | undefined,
+  fallback?: Date,
 ): Date {
   fallback = fallback || new Date();
 
@@ -41,4 +86,17 @@ export function getValidDate(
     return fallback;
   }
   return d;
+}
+/**
+ * This function will offset the time passed in
+ * to show its "true" time eg if you pass in
+ * `12/04/2023` if will show `12/04/2023`
+ * even if the user is in pacific time
+ *
+ */
+export function getValidDateOffsetByUTC(
+  ...params: Parameters<typeof getValidDate>
+): Date {
+  const date = getValidDate(...params);
+  return new Date(date.getTime() + date.getTimezoneOffset() * 60000);
 }

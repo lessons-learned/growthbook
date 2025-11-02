@@ -1,32 +1,55 @@
-import { FC, useState } from "react";
-import { GBEdit } from "../Icons";
-import HeaderWithEdit from "../Layout/HeaderWithEdit";
-import LoadingOverlay from "../LoadingOverlay";
+import { useState } from "react";
+import { Box, Flex } from "@radix-ui/themes";
+import { BsStars } from "react-icons/bs";
+import HeaderWithEdit from "@/components/Layout/HeaderWithEdit";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import Button from "@/ui/Button";
+import { useAISettings } from "@/hooks/useOrgSettings";
+import OptInModal from "@/components/License/OptInModal";
+import { useUser } from "@/services/UserContext";
+import PremiumTooltip from "@/components/Marketing/PremiumTooltip";
 import Markdown from "./Markdown";
 import MarkdownInput from "./MarkdownInput";
 
-const MarkdownInlineEdit: FC<{
+type Props = {
+  value: string;
   save: (text: string) => Promise<void>;
   canEdit?: boolean;
   canCreate?: boolean;
-  value: string;
   label?: string;
   className?: string;
-  header?: string;
-}> = ({
+  containerClassName?: string;
+  header?: string | JSX.Element;
+  headerClassName?: string;
+  emptyHelperText?: string;
+  aiSuggestFunction?: () => Promise<string>;
+  aiButtonText?: string;
+  aiSuggestionHeader?: string;
+};
+
+export default function MarkdownInlineEdit({
   value,
   save,
   canEdit = true,
   canCreate = true,
   label = "description",
   className = "",
+  containerClassName = "",
   header = "",
-}) => {
+  headerClassName = "h3",
+  emptyHelperText,
+  aiSuggestFunction,
+  aiButtonText = "Get AI Suggestion",
+  aiSuggestionHeader = "Suggestion",
+}: Props) {
   const [edit, setEdit] = useState(false);
   const [val, setVal] = useState("");
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'null' is not assignable to param... Remove this comment to see the full error message
-  const [error, setError] = useState<string>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [aiAgreementModal, setAiAgreementModal] = useState(false);
+  const { aiAgreedTo, aiEnabled } = useAISettings();
+  const { hasCommercialFeature } = useUser();
+  const hasAISuggestions = hasCommercialFeature("ai-suggestions");
 
   if (edit) {
     return (
@@ -35,7 +58,6 @@ const MarkdownInlineEdit: FC<{
         onSubmit={async (e) => {
           e.preventDefault();
           if (loading) return;
-          // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'null' is not assignable to param... Remove this comment to see the full error message
           setError(null);
           setLoading(true);
           try {
@@ -47,76 +69,162 @@ const MarkdownInlineEdit: FC<{
           setLoading(false);
         }}
       >
-        {header && <h4>{header}</h4>}
+        {header && (
+          <Flex align={"center"} justify="between">
+            <div className={headerClassName}>{header}</div>{" "}
+            {aiSuggestFunction && (
+              <Flex gap="2">
+                <div className="col-auto">
+                  <button
+                    className="btn btn-link mr-2 ml-3"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setEdit(false);
+                    }}
+                  >
+                    cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    Save
+                  </button>
+                </div>
+              </Flex>
+            )}
+          </Flex>
+        )}
         {loading && <LoadingOverlay />}
         <MarkdownInput
           value={val}
           setValue={setVal}
           cta={"Save"}
-          error={error}
+          error={error ?? undefined}
           autofocus={true}
           onCancel={() => setEdit(false)}
+          aiSuggestFunction={aiSuggestFunction}
+          aiButtonText={aiButtonText}
+          aiSuggestionHeader={aiSuggestionHeader}
+          showButtons={!aiSuggestFunction}
         />
       </form>
     );
   }
 
   return (
-    <div className={className}>
+    <Box className={className} style={{ position: "relative" }}>
+      {loading && (
+        <LoadingOverlay
+          text={aiSuggestFunction ? "Generating..." : "Loading..."}
+        />
+      )}
       {header && (
         <HeaderWithEdit
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'false | "" | (() => void)' is not assignable... Remove this comment to see the full error message
           edit={
-            value &&
-            canEdit &&
-            (() => {
-              setVal(value || "");
-              setEdit(true);
-            })
+            canEdit
+              ? () => {
+                  setVal(value || "");
+                  setEdit(true);
+                }
+              : undefined
           }
+          className={headerClassName}
+          containerClassName={containerClassName}
         >
           {header}
         </HeaderWithEdit>
       )}
-      <div className="row">
-        <div className="col">
+      <Flex align="start" justify="between" gap="4">
+        <Box className="" flexGrow="1">
           {value ? (
             <Markdown className="card-text">{value}</Markdown>
           ) : (
-            <div className="card-text">
+            <Box className="card-text">
               {canCreate ? (
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setVal(value || "");
-                    setEdit(true);
-                  }}
-                >
-                  <em>Add {label}</em>
-                </a>
+                <>
+                  <Box pt={"3"}>
+                    {emptyHelperText ? (
+                      <em>{emptyHelperText}</em>
+                    ) : (
+                      <a
+                        role="button"
+                        className="link-purple"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setVal(value || "");
+                          setEdit(true);
+                        }}
+                      >
+                        <em>Add {label}</em>
+                      </a>
+                    )}
+                  </Box>
+                  {aiSuggestFunction && (
+                    <Box pt={"5"} className="d-inline-block">
+                      {!hasAISuggestions ? (
+                        <PremiumTooltip commercialFeature="ai-suggestions">
+                          <Button variant="soft" disabled={true}>
+                            {aiButtonText}
+                          </Button>
+                        </PremiumTooltip>
+                      ) : (
+                        <Button
+                          variant="soft"
+                          onClick={async () => {
+                            if (!aiAgreedTo) {
+                              setAiAgreementModal(true);
+                            } else if (!aiEnabled) {
+                              setError(
+                                "AI suggestions are not enabled for your organization. Enable it in settings.",
+                              );
+                              setEdit(true); // Error is only shown in edit mode
+                            } else {
+                              setError(null);
+                              setLoading(true);
+                              try {
+                                const suggestion = await aiSuggestFunction();
+                                if (suggestion) {
+                                  setVal(suggestion);
+                                }
+                                setLoading(false);
+                                setEdit(true);
+                              } catch (e) {
+                                setLoading(false);
+                                setError(e.message);
+                                setEdit(true); // Error is only shown in edit mode
+                              }
+                            }
+                          }}
+                        >
+                          {aiButtonText} <BsStars />
+                        </Button>
+                      )}
+                    </Box>
+                  )}
+                </>
               ) : (
                 <em>No {label}</em>
               )}
-            </div>
+            </Box>
           )}
-        </div>
+        </Box>
         {value && canEdit && !header && (
-          <div className="col-auto">
+          <Box className="">
             <a
-              href="#"
+              role="button"
+              className="link-purple"
               onClick={(e) => {
                 e.preventDefault();
                 setVal(value || "");
                 setEdit(true);
               }}
             >
-              <GBEdit />
+              <Button variant="ghost">Edit</Button>
             </a>
-          </div>
+          </Box>
         )}
-      </div>
-    </div>
+      </Flex>
+      {aiAgreementModal && (
+        <OptInModal agreement="ai" onClose={() => setAiAgreementModal(false)} />
+      )}
+    </Box>
   );
-};
-export default MarkdownInlineEdit;
+}

@@ -8,7 +8,6 @@ import React, {
 } from "react";
 import { useRouter } from "next/router";
 import {
-  MemberRole,
   MemberRoleInfo,
   OrganizationInterface,
 } from "back-end/types/organization";
@@ -16,25 +15,36 @@ import {
   IdTokenResponse,
   UnauthenticatedResponse,
 } from "back-end/types/sso-connection";
-import * as Sentry from "@sentry/react";
-import Modal from "../components/Modal";
-import { DocLink } from "../components/DocLink";
-import Welcome from "../components/Auth/Welcome";
+import * as Sentry from "@sentry/nextjs";
+import { roleSupportsEnvLimit } from "shared/permissions";
+import Modal from "@/components/Modal";
+import { DocLink } from "@/components/DocLink";
+import Welcome from "@/components/Auth/Welcome";
 import { getApiHost, getAppOrigin, isCloud, isSentryEnabled } from "./env";
+import { useProject, LOCALSTORAGE_PROJECT_KEY } from "./DefinitionsContext";
 
 export type UserOrganizations = { id: string; name: string }[];
-
-export type ApiCallType<T> = (url: string, options?: RequestInit) => Promise<T>;
+// eslint-disable-next-line
+type ErrorHandler = (responseData: any) => void;
+export type ApiCallType<T> = (
+  url: string,
+  options?: RequestInit,
+  errorHandler?: ErrorHandler,
+) => Promise<T>;
 
 export interface AuthContextValue {
   isAuthenticated: boolean;
   loading: boolean;
   logout: () => Promise<void>;
-  apiCall: <T>(url: string, options?: RequestInit) => Promise<T>;
-  orgId?: string;
+  apiCall: <T>(
+    url: string | null,
+    options?: RequestInit,
+    errorHandler?: ErrorHandler,
+  ) => Promise<T>;
+  orgId: string | null;
   setOrgId?: (orgId: string) => void;
   organizations?: UserOrganizations;
-  setOrganizations?: (orgs: UserOrganizations) => void;
+  setOrganizations?: (orgs: UserOrganizations, superAdmin: boolean) => void;
   specialOrg?: null | Partial<OrganizationInterface>;
   setOrgName?: (name: string) => void;
   setSpecialOrg?: (org: null | Partial<OrganizationInterface>) => void;
@@ -51,8 +61,12 @@ export const AuthContext = React.createContext<AuthContextValue>({
     let x: any;
     return x;
   },
+  orgId: null,
 });
+
 export const useAuth = (): AuthContextValue => useContext(AuthContext);
+
+const passthroughQueryParams = ["hypgen", "hypothesis"];
 
 // Only run one refresh operation at a time
 let _currentRefreshOperation: null | Promise<
@@ -60,7 +74,27 @@ let _currentRefreshOperation: null | Promise<
 > = null;
 async function refreshToken() {
   if (!_currentRefreshOperation) {
-    _currentRefreshOperation = fetch(getApiHost() + "/auth/refresh", {
+    let url = getApiHost() + "/auth/refresh";
+
+    // If this is an IdP-initiated Enterprise SSO login on Cloud
+    // Send a hint to the back-end with the SSO Connection ID
+    // This way, we can bypass several steps - "Login with Enterprise SSO", enter email, etc.
+    if (isCloud()) {
+      const params = new URL(window.location.href).searchParams;
+      const ssoId = params.get("ssoId");
+      if (ssoId) {
+        url += "?ssoId=" + ssoId;
+      }
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    searchParams.forEach((v, k) => {
+      if (passthroughQueryParams.includes(k)) {
+        url += `${url.indexOf("?") > -1 ? "&" : "?"}${k}=${v}`;
+      }
+    });
+
+    _currentRefreshOperation = fetch(url, {
       method: "POST",
       credentials: "include",
     })
@@ -96,6 +130,25 @@ async function refreshToken() {
 }
 
 const isLocal = (url: string) => url.includes("localhost");
+
+const isUnregisteredCloudUser = () => {
+  if (!isCloud()) return false;
+
+  try {
+    const currentProject = window.localStorage.getItem(
+      LOCALSTORAGE_PROJECT_KEY,
+    );
+    return currentProject === null;
+  } catch (_) {
+    return true;
+  }
+};
+
+const addCloudRegisterParam = (uri: string) => {
+  const url = new URL(uri);
+  url.searchParams.append("screen_hint", "signup");
+  return url.toString();
+};
 
 function getDetailedError(error: string): string | ReactElement {
   const curUrl = window.location.origin;
@@ -145,23 +198,23 @@ export async function redirectWithTimeout(url: string, timeout: number = 5000) {
   await new Promise((resolve) => setTimeout(resolve, timeout));
 }
 
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({
-  children,
-}) => {
+export const AuthProvider: React.FC<{
+  exitOnNoAuth?: boolean;
+  children: ReactNode;
+}> = ({ exitOnNoAuth = true, children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState("");
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'null' is not assignable to param... Remove this comment to see the full error message
-  const [orgId, setOrgId] = useState<string>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
   const [organizations, setOrganizations] = useState<UserOrganizations>([]);
-  const [
-    specialOrg,
-    setSpecialOrg,
-  ] = useState<Partial<OrganizationInterface> | null>(null);
+  const [specialOrg, setSpecialOrg] =
+    useState<Partial<OrganizationInterface> | null>(null);
   const [authComponent, setAuthComponent] = useState<ReactElement | null>(null);
   const [initError, setInitError] = useState("");
   const [sessionError, setSessionError] = useState(false);
   const router = useRouter();
   const initialOrgId = router.query.org ? router.query.org + "" : null;
+
+  const [, setProject] = useProject();
 
   async function init() {
     const resp = await refreshToken();
@@ -169,12 +222,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setInitError("");
       setToken(resp.token);
       setLoading(false);
+    } else if (!exitOnNoAuth) {
+      setInitError("");
+      setLoading(false);
     } else if ("redirectURI" in resp) {
       if (resp.confirm) {
         setAuthComponent(
           <Modal
+            trackingEventModalType=""
             open={true}
-            header="Sign In Required"
             submit={async () => {
               await redirectWithTimeout(resp.redirectURI);
             }}
@@ -184,8 +240,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             closeCta="Cancel"
             cta="Sign In"
           >
-            <p>You must sign in with your SSO provider to continue.</p>
-          </Modal>
+            <h3>Sign In Required</h3>
+            <p>
+              You must sign in with your Enterprise SSO provider to continue.
+            </p>
+          </Modal>,
         );
       } else {
         try {
@@ -193,24 +252,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             window.location.pathname + (window.location.search || "");
           window.sessionStorage.setItem(
             "postAuthRedirectPath",
-            redirectAddress
+            redirectAddress,
           );
         } catch (e) {
           // ignore
         }
+
         // Don't need to confirm, just redirect immediately
-        window.location.href = resp.redirectURI;
+        if (isUnregisteredCloudUser()) {
+          window.location.href = addCloudRegisterParam(resp.redirectURI);
+        } else {
+          window.location.href = resp.redirectURI;
+        }
       }
     } else if ("showLogin" in resp) {
       setLoading(false);
       setAuthComponent(
         <Welcome
           firstTime={resp.newInstallation}
-          onSuccess={(t) => {
+          onSuccess={(t, pid) => {
             setToken(t);
+            if (pid) {
+              setProject(pid);
+            }
             setAuthComponent(null);
           }}
-        />
+        />,
       );
     } else {
       console.log(resp);
@@ -224,6 +291,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setInitError(e.message);
       console.error(e);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const orgList = [...organizations];
@@ -244,24 +312,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       init.headers["Authorization"] = `Bearer ${token}`;
       init.credentials = "include";
 
-      if (init.body) {
+      if (init.body && !init.headers["Content-Type"]) {
         init.headers["Content-Type"] = "application/json";
       }
 
-      if (orgId) {
+      if (orgId && !init.headers["X-Organization"]) {
         init.headers["X-Organization"] = orgId;
       }
 
       const response = await fetch(getApiHost() + url, init);
 
-      const responseData = await response.json();
+      const contentType = response.headers.get("Content-Type");
+
+      let responseData;
+
+      if (contentType && contentType.startsWith("image/")) {
+        responseData = await response.blob();
+      } else {
+        responseData = await response.json();
+      }
+
       return responseData;
     },
-    [orgId]
+    [orgId],
   );
 
   const apiCall = useCallback(
-    async (url: string, options: RequestInit = {}) => {
+    async (
+      url: string | null,
+      options: RequestInit = {},
+      errorHandler: ErrorHandler | null = null,
+    ) => {
+      if (typeof url !== "string") return;
+
       let responseData = await _makeApiCall(url, token, options);
 
       if (responseData.status && responseData.status >= 400) {
@@ -282,7 +365,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
                 window.location.pathname + (window.location.search || "");
               window.sessionStorage.setItem(
                 "postAuthRedirectPath",
-                redirectAddress
+                redirectAddress,
               );
             } catch (e) {
               // ignore
@@ -292,20 +375,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           }
           setSessionError(true);
           throw new Error(
-            "Your session has expired. Refresh the page to continue."
+            "Your session has expired. Refresh the page to continue.",
           );
         }
 
+        if (errorHandler) {
+          errorHandler(responseData);
+        }
         throw new Error(responseData.message || "There was an error");
       }
 
       return responseData;
     },
-    [token, _makeApiCall]
+    [token, _makeApiCall],
   );
 
   const wrappedSetOrganizations = useCallback(
-    (orgs: UserOrganizations) => {
+    (orgs: UserOrganizations, superAdmin: boolean) => {
       setOrganizations(orgs);
       if (orgId && orgs.map((o) => o.id).includes(orgId)) {
         return;
@@ -323,12 +409,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       if (orgs.length > 0) {
         try {
           const pickedOrg = localStorage.getItem("gb-last-picked-org");
-          if (pickedOrg && !router.query.org) {
-            try {
-              setOrgId(JSON.parse(pickedOrg));
-            } catch (e) {
-              setOrgId(orgs[0].id);
-            }
+          if (
+            pickedOrg &&
+            !router.query.org &&
+            (superAdmin ||
+              orgs.map((o) => o.id).includes(JSON.parse(pickedOrg)))
+          ) {
+            setOrgId(JSON.parse(pickedOrg));
           } else {
             setOrgId(orgs[0].id);
           }
@@ -337,12 +424,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         }
       }
     },
-    [initialOrgId, orgId, router.query.org, specialOrg?.id]
+    [initialOrgId, orgId, router.query.org, specialOrg?.id],
   );
 
   if (initError) {
     return (
       <Modal
+        trackingEventModalType=""
         header="logo"
         open={true}
         cta="Try Again"
@@ -368,6 +456,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   if (sessionError) {
     return (
       <Modal
+        trackingEventModalType=""
         open={true}
         cta="OK"
         submit={async () => {
@@ -391,7 +480,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
             method: "POST",
             credentials: "include",
           });
-          // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'null' is not assignable to param... Remove this comment to see the full error message
           setOrgId(null);
           setOrganizations([]);
           setSpecialOrg(null);
@@ -430,15 +518,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   );
 };
 
-export function roleSupportsEnvLimit(role: MemberRole): boolean {
-  return ["engineer", "experimenter"].includes(role);
-}
-
 export function roleHasAccessToEnv(
   role: MemberRoleInfo,
-  env: string
+  env: string,
+  org: Partial<OrganizationInterface>,
 ): "yes" | "no" | "N/A" {
-  if (!roleSupportsEnvLimit(role.role)) return "N/A";
+  if (!roleSupportsEnvLimit(role.role, org)) return "N/A";
 
   if (!role.limitAccessByEnvironment) return "yes";
 

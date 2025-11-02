@@ -3,7 +3,7 @@ info:
   version: "1.0.0"
   title: "GrowthBook REST API"
   description: |
-    GrowthBook offers a full REST API for interacting with the GrowthBook application. This is currently in **beta** as we add more authenticated API routes and features.
+    GrowthBook offers a full REST API for interacting with the application.
 
     Request data can use either JSON or Form data encoding (with proper `Content-Type` headers). All response bodies are JSON-encoded.
 
@@ -13,7 +13,10 @@ info:
 
     We support both the HTTP Basic and Bearer authentication schemes for convenience.
 
-    You first need to generate a new Secret Key in GrowthBook by going to `Settings -> API Keys`.
+    You first need to generate a new API Key in GrowthBook. Different keys have different permissions:
+
+    - **Personal Access Tokens**: These are sensitive and provide the same level of access as the user has to an organization. These can be created by going to `Personal Access Tokens` under the your user menu.
+    - **Secret Keys**: These are sensitive and provide the level of access for the role, which currently is either `admin` or `readonly`. Only Admins with the `manageApiKeys` permission can manage Secret Keys on behalf of an organization. These can be created by going to `Settings -> API Keys`
 
     If using HTTP Basic auth, pass the Secret Key as the username and leave the password blank:
 
@@ -57,18 +60,33 @@ tags:
   - name: projects
     x-displayName: Projects
     description: Projects are used to organize your feature flags and experiments
+  - name: environments
+    x-displayName: Environments
+    description: GrowthBook comes with one environment by default (production),
+      but you can add as many as you need. When used with feature
+      flags, you can enable/disable feature flags on a per-environment
+      basis.
   - name: features
     x-displayName: Feature Flags
     description: Control your feature flags programatically
   - name: data-sources
     x-displayName: Data Sources
     description: How GrowthBook connects and queries your data
+  - name: fact-tables
+    x-displayName: Fact Tables
+    description: Fact Tables describe the shape of your data warehouse tables
+  - name: fact-metrics
+    x-displayName: Fact Metrics
+    description: Fact Metrics are metrics built on top of Fact Table definitions
   - name: metrics
-    x-displayName: Metrics
+    x-displayName: Metrics (legacy)
     description: Metrics used as goals and guardrails for experiments
   - name: experiments
     x-displayName: Experiments
     description: Experiments (A/B Tests)
+  - name: snapshots
+    x-displayName: Experiment Snapshots
+    description: Experiment Snapshots (the individual updates of an experiment)
   - name: dimensions
     x-displayName: Dimensions
     description: Dimensions used during experiment analysis
@@ -84,39 +102,126 @@ tags:
   - name: saved-groups
     x-displayName: Saved Groups
     description: Defined sets of attribute values which can be used with feature rules for targeting features at particular users.
+  - name: organizations
+    x-displayName: Organizations
+    description: Organizations are used for multi-org deployments where different teams can run their own isolated feature flags and experiments. These endpoints are only via a super-admin's Personal Access Token.
+  - name: members
+    x-displayName: Members
+    description: Members are users who have been invited to an organization.
+  - name: code-references
+    x-displayName: Code References
+    description: Intended for use with our code reference CI utility, [`gb-find-code-refs`](https://github.com/growthbook/gb-find-code-refs).
+  - name: archetypes
+    x-displayName: Archetypes
+    description: Archetypes allow you to simulate the result of targeting rules on pre-set user attributes
+  - name: queries
+    x-displayName: Queries
+    description: Retrieve queries used in experiments to calculate results.
+  - name: settings
+    x-displayName: Settings
+    description: Get the organization settings.
+  - name: attributes
+    x-displayName: Attributes
+    description: Used when targeting feature flags and experiments.
 paths:
   /features:
-    $ref: "./paths/listFeatures.yaml"
+    get:
+      $ref: "./paths/listFeatures.yaml"
+    post:
+      $ref: "./paths/postFeature.yaml"
   /features/{id}:
-    $ref: "./paths/getFeature.yaml"
+    get:
+      $ref: "./paths/getFeature.yaml"
+    post:
+      $ref: "./paths/updateFeature.yaml"
+    delete:
+      $ref: "./paths/deleteFeature.yaml"
   /features/{id}/toggle:
     $ref: "./paths/toggleFeature.yaml"
+  /features/{id}/revert:
+    $ref: "./paths/revertFeature.yaml"
+  /features/{id}/revisions:
+    get:
+      $ref: "./paths/getFeatureRevisions.yaml"
+  /feature-keys:
+    get:
+      $ref: "./paths/getFeatureKeys.yaml"
   /projects:
-    $ref: "./paths/listProjects.yaml"
+    get:
+      $ref: "./paths/listProjects.yaml"
+    post:
+      $ref: "./paths/postProject.yaml"
   /projects/{id}:
-    $ref: "./paths/getProject.yaml"
+    get:
+      $ref: "./paths/getProject.yaml"
+    put:
+      $ref: "./paths/putProject.yaml"
+    delete:
+      $ref: "./paths/deleteProject.yaml"
   /dimensions:
-    $ref: "./paths/listDimensions.yaml"
+    get:
+      $ref: "./paths/listDimensions.yaml"
+    post:
+      $ref: "./paths/postDimension.yaml"
   /dimensions/{id}:
-    $ref: "./paths/getDimension.yaml"
+    get:
+      $ref: "./paths/getDimension.yaml"
+    post:
+      $ref: "./paths/updateDimension.yaml"
+    delete:
+      $ref: "./paths/deleteDimension.yaml"
   /segments:
-    $ref: "./paths/listSegments.yaml"
+    get:
+      $ref: "./paths/listSegments.yaml"
+    post:
+      $ref: "./paths/postSegment.yaml"
   /segments/{id}:
-    $ref: "./paths/getSegment.yaml"
+    get:
+      $ref: "./paths/getSegment.yaml"
+    post:
+      $ref: "./paths/updateSegment.yaml"
+    delete:
+      $ref: "./paths/deleteSegment.yaml"
   /sdk-connections:
-    $ref: "./paths/listSdkConnections.yaml"
+    get:
+      $ref: "./paths/listSdkConnections.yaml"
+    post:
+      $ref: "./paths/postSdkConnection.yaml"
   /sdk-connections/{id}:
-    $ref: "./paths/getSdkConnection.yaml"
+    get:
+      $ref: "./paths/getSdkConnection.yaml"
+    put:
+      $ref: "./paths/putSdkConnection.yaml"
+    delete:
+      $ref: "./paths/deleteSdkConnection.yaml"
+  /sdk-connections/lookup/{key}:
+    get:
+      $ref: "./paths/lookupSdkConnectionByKey.yaml"
   /data-sources:
     $ref: "./paths/listDataSources.yaml"
   /data-sources/{id}:
     $ref: "./paths/getDataSource.yaml"
   /experiments:
-    $ref: "./paths/listExperiments.yaml"
+    get:
+      $ref: "./paths/listExperiments.yaml"
+    post:
+      $ref: "./paths/postExperiment.yaml"
+  /experiment-names:
+    get:
+      $ref: "./paths/getExperimentNames.yaml"
   /experiments/{id}:
-    $ref: "./paths/getExperiment.yaml"
+    get:
+      $ref: "./paths/getExperiment.yaml"
+    post:
+      $ref: "./paths/updateExperiment.yaml"
+  /experiments/{id}/snapshot:
+    $ref: "./paths/postExperimentSnapshot.yaml"
   /experiments/{id}/results:
     $ref: "./paths/getExperimentResults.yaml"
+  /experiments/{id}/visual-changesets:
+    $ref: "./paths/listVisualChangesets.yaml"
+  /snapshots/{id}:
+    $ref: "./paths/getExperimentSnapshot.yaml"
   /metrics:
     get:
       $ref: "./paths/listMetrics.yaml"
@@ -125,8 +230,10 @@ paths:
   /metrics/{id}:
     get:
       $ref: "./paths/getMetric.yaml"
-  /experiments/{id}/visual-changesets:
-    $ref: "./paths/listVisualChangesets.yaml"
+    put:
+      $ref: "./paths/putMetric.yaml"
+    delete:
+      $ref: "./paths/deleteMetric.yaml"
   /visual-changesets/{id}:
     get:
       $ref: "./paths/getVisualChangeset.yaml"
@@ -148,6 +255,110 @@ paths:
       $ref: "./paths/updateSavedGroup.yaml"
     delete:
       $ref: "./paths/deleteSavedGroup.yaml"
+  /organizations:
+    get:
+      $ref: "./paths/listOrganizations.yaml"
+    post:
+      $ref: "./paths/postOrganization.yaml"
+  /organizations/{id}:
+    put:
+      $ref: "./paths/putOrganization.yaml"
+  /attributes:
+    get:
+      $ref: "./paths/listAttributes.yaml"
+    post:
+      $ref: "./paths/postAttribute.yaml"
+  /attributes/${property}:
+    put:
+      $ref: "./paths/putAttribute.yaml"
+    delete:
+      $ref: "./paths/deleteAttribute.yaml"
+  /archetypes:
+    get:
+      $ref: "./paths/listArchetypes.yaml"
+    post:
+      $ref: "./paths/postArchetype.yaml"
+  /archetypes/${id}:
+    get:
+      $ref: "./paths/getArchetype.yaml"
+    put:
+      $ref: "./paths/putArchetype.yaml"
+    delete:
+      $ref: "./paths/deleteArchetype.yaml"
+  /members:
+    get:
+      $ref: "./paths/listMembers.yaml"
+  /members/{id}:
+    delete:
+      $ref: "./paths/deleteMember.yaml"
+  /members/{id}/role:
+    post:
+      $ref: "./paths/updateMemberRole.yaml"
+  /environments:
+    get:
+      $ref: "./paths/listEnvironments.yaml"
+    post:
+      $ref: "./paths/postEnvironment.yaml"
+  /environments/${id}:
+    put:
+      $ref: "./paths/putEnvironment.yaml"
+    delete:
+      $ref: "./paths/deleteEnvironment.yaml"
+  /fact-tables:
+    get:
+      $ref: "./paths/listFactTables.yaml"
+    post:
+      $ref: "./paths/postFactTable.yaml"
+  /fact-tables/{id}:
+    get:
+      $ref: "./paths/getFactTable.yaml"
+    post:
+      $ref: "./paths/updateFactTable.yaml"
+    delete:
+      $ref: "./paths/deleteFactTable.yaml"
+  /fact-tables/{factTableId}/filters:
+    get:
+      $ref: "./paths/listFactTableFilters.yaml"
+    post:
+      $ref: "./paths/postFactTableFilter.yaml"
+  /fact-tables/{factTableId}/filters/{id}:
+    get:
+      $ref: "./paths/getFactTableFilter.yaml"
+    post:
+      $ref: "./paths/updateFactTableFilter.yaml"
+    delete:
+      $ref: "./paths/deleteFactTableFilter.yaml"
+  /fact-metrics:
+    get:
+      $ref: "./paths/listFactMetrics.yaml"
+    post:
+      $ref: "./paths/postFactMetric.yaml"
+  /fact-metrics/{id}:
+    get:
+      $ref: "./paths/getFactMetric.yaml"
+    post:
+      $ref: "./paths/updateFactMetric.yaml"
+    delete:
+      $ref: "./paths/deleteFactMetric.yaml"
+  /fact-metrics/{id}/analysis:
+    $ref: "./paths/postFactMetricAnalysis.yaml"
+  /bulk-import/facts:
+    post:
+      $ref: "./paths/postBulkImportFacts.yaml"
+  /code-refs:
+    post:
+      $ref: "./paths/postCodeRefs.yaml"
+    get:
+      $ref: "./paths/listCodeRefs.yaml"
+  /code-refs/{id}:
+    get:
+      $ref: "./paths/getCodeRefs.yaml"
+  /queries/{id}:
+    get:
+      $ref: "./paths/getQuery.yaml"
+  /settings:
+    get:
+      $ref: "./paths/getSettings.yaml"
   # PLOP_INSERT_PATHS_HERE
 components:
   parameters:

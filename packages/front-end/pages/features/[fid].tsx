@@ -1,736 +1,389 @@
-import Link from "next/link";
 import { useRouter } from "next/router";
-import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
-import { FeatureInterface } from "back-end/types/feature";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
+import { FeatureInterface, FeatureRule } from "back-end/types/feature";
+import { FeatureCodeRefsInterface } from "back-end/types/code-refs";
 import { FeatureRevisionInterface } from "back-end/types/feature-revision";
-import React, { useState } from "react";
-import { FaCheckCircle, FaExclamationTriangle } from "react-icons/fa";
-import { BsLightningFill } from "react-icons/bs";
-import MoreMenu from "@/components/Dropdown/MoreMenu";
-import { GBAddCircle, GBCircleArrowLeft, GBEdit } from "@/components/Icons";
-import LoadingOverlay from "@/components/LoadingOverlay";
-import useApi from "@/hooks/useApi";
-import DeleteButton from "@/components/DeleteButton/DeleteButton";
-import { useAuth } from "@/services/auth";
-import RuleModal from "@/components/Features/RuleModal";
-import ForceSummary from "@/components/Features/ForceSummary";
-import RuleList from "@/components/Features/RuleList";
-import track from "@/services/track";
-import EditDefaultValueModal from "@/components/Features/EditDefaultValueModal";
-import MarkdownInlineEdit from "@/components/Markdown/MarkdownInlineEdit";
-import EnvironmentToggle from "@/components/Features/EnvironmentToggle";
-import { useDefinitions } from "@/services/DefinitionsContext";
-import EditProjectForm from "@/components/Experiment/EditProjectForm";
-import EditTagsForm from "@/components/Tags/EditTagsForm";
-import ControlledTabs from "@/components/Tabs/ControlledTabs";
-import WatchButton from "@/components/WatchButton";
+import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
 import {
-  getFeatureDefaultValue,
-  getRules,
-  useEnvironmentState,
-  useEnvironments,
-  getEnabledEnvironments,
-  getAffectedEnvs,
-} from "@/services/features";
-import Tab from "@/components/Tabs/Tab";
-import FeatureImplementationModal from "@/components/Features/FeatureImplementationModal";
-import SortedTags from "@/components/Tags/SortedTags";
-import Modal from "@/components/Modal";
-import HistoryTable from "@/components/HistoryTable";
-import DraftModal from "@/components/Features/DraftModal";
-import ConfirmButton from "@/components/Modal/ConfirmButton";
-import RevisionDropdown from "@/components/Features/RevisionDropdown";
-import usePermissions from "@/hooks/usePermissions";
-import DiscussionThread from "@/components/DiscussionThread";
-import EditOwnerModal from "@/components/Owner/EditOwnerModal";
-import FeatureModal from "@/components/Features/FeatureModal";
-import { isCloud } from "@/services/env";
-import TempMessage from "@/components/TempMessage";
-import useSDKConnections from "@/hooks/useSDKConnections";
-import Tooltip from "@/components/Tooltip/Tooltip";
+  filterEnvironmentsByFeature,
+  getDependentExperiments,
+  getDependentFeatures,
+  mergeRevision,
+} from "shared/util";
+import { SafeRolloutInterface } from "back-end/src/validators/safe-rollout";
+import { HoldoutInterface } from "back-end/src/routers/holdout/holdout.validators";
+import { MinimalFeatureRevisionInterface } from "back-end/src/validators/features";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import PageHead from "@/components/Layout/PageHead";
+import FeaturesHeader from "@/components/Features/FeaturesHeader";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
+import FeaturesOverview from "@/components/Features/FeaturesOverview";
+import FeaturesStats from "@/components/Features/FeaturesStats";
+import useOrgSettings from "@/hooks/useOrgSettings";
+import { useEnvironments, useFeaturesList } from "@/services/features";
+import { FeatureUsageProvider } from "@/components/Features/FeatureUsageGraph";
+import FeatureTest from "@/components/Features/FeatureTest";
+import { useAuth } from "@/services/auth";
+import EditTagsForm from "@/components/Tags/EditTagsForm";
+import EditFeatureInfoModal from "@/components/Features/EditFeatureInfoModal";
+import { useExperiments } from "@/hooks/useExperiments";
+
+const featureTabs = ["overview", "stats", "test"] as const;
+export type FeatureTab = (typeof featureTabs)[number];
 
 export default function FeaturePage() {
   const router = useRouter();
+  const orgSettings = useOrgSettings();
   const { fid } = router.query;
-
-  const [edit, setEdit] = useState(false);
-  const [auditModal, setAuditModal] = useState(false);
-  const [draftModal, setDraftModal] = useState(false);
-  const [duplicateModal, setDuplicateModal] = useState(false);
-  const permissions = usePermissions();
-
-  const [env, setEnv] = useEnvironmentState();
-
-  const [ruleModal, setRuleModal] = useState<{
-    i: number;
-    environment: string;
-    defaultType?: string;
-  } | null>(null);
   const [editProjectModal, setEditProjectModal] = useState(false);
   const [editTagsModal, setEditTagsModal] = useState(false);
-  const [editOwnerModal, setEditOwnerModal] = useState(false);
-  const [publishedMessage, setPublishedMessage] = useState(false);
-  const onPublish = () => {
-    if (!publishedMessage) {
-      setPublishedMessage(true);
-    } else {
-      setPublishedMessage(false);
-      setTimeout(() => {
-        setPublishedMessage(true);
-      }, 150);
-    }
-  };
-
-  const { getProjectById, projects } = useDefinitions();
+  const [editFeatureInfoModal, setEditFeatureInfoModal] = useState(false);
+  const [version, setVersion] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastDisplayedVersion, setLastDisplayedVersion] = useState<
+    number | null
+  >(null);
 
   const { apiCall } = useAuth();
 
-  const { data, error, mutate } = useApi<{
-    feature: FeatureInterface;
-    experiments: { [key: string]: ExperimentInterfaceStringDates };
-    revisions: FeatureRevisionInterface[];
-  }>(`/feature/${fid}`);
-  const firstFeature = router?.query && "first" in router.query;
-  const [showImplementation, setShowImplementation] = useState(firstFeature);
-  const environments = useEnvironments();
+  const { features } = useFeaturesList(false);
+  const allEnvironments = useEnvironments();
 
-  const { data: sdkConnectionsData } = useSDKConnections();
+  const [data, setData] = useState<{
+    feature: FeatureInterface | null;
+    revisionList: MinimalFeatureRevisionInterface[];
+    revisions: FeatureRevisionInterface[];
+    experiments: ExperimentInterfaceStringDates[];
+    safeRollouts: SafeRolloutInterface[];
+    codeRefs: FeatureCodeRefsInterface[];
+    holdout: HoldoutInterface | undefined;
+  }>({
+    feature: null,
+    revisionList: [],
+    revisions: [],
+    experiments: [],
+    safeRollouts: [],
+    codeRefs: [],
+    holdout: undefined,
+  });
+
+  const baseFeature = data?.feature;
+  const baseFeatureVersion = baseFeature?.version;
+  const revisions = data?.revisions;
+  const experiments = data?.experiments;
+  const safeRollouts = data?.safeRollouts;
+  const holdout = data?.holdout;
+  const [error, setError] = useState<string | null>(null);
+  const { experiments: allExperiments } = useExperiments();
+
+  const fetchData = useCallback(
+    async (queryString = "") => {
+      const mergeArraysByKey = <T, K extends keyof T>(
+        existingArray: T[],
+        newArray: T[],
+        key: K,
+      ): T[] => {
+        const keyMap = new Map(existingArray.map((item) => [item[key], item]));
+
+        newArray.forEach((newItem) => {
+          keyMap.set(newItem[key], newItem); // Replace or add the new item
+        });
+
+        return Array.from(keyMap.values());
+      };
+
+      try {
+        setLoading(true);
+
+        const response = await apiCall<{
+          feature: FeatureInterface;
+          revisionList: MinimalFeatureRevisionInterface[];
+          revisions: FeatureRevisionInterface[];
+          experiments: ExperimentInterfaceStringDates[];
+          safeRollouts: SafeRolloutInterface[];
+          codeRefs: FeatureCodeRefsInterface[];
+          holdout: HoldoutInterface | undefined;
+        }>(`/feature/${fid}${queryString}`);
+
+        // Merge new data with existing data
+        setData((prevData) => ({
+          feature: response.feature,
+          revisionList: response.revisionList,
+          revisions: mergeArraysByKey<FeatureRevisionInterface, "version">(
+            prevData.revisions,
+            response.revisions,
+            "version",
+          ),
+          experiments: mergeArraysByKey<ExperimentInterfaceStringDates, "id">(
+            prevData.experiments,
+            response.experiments,
+            "id",
+          ),
+          safeRollouts: mergeArraysByKey<SafeRolloutInterface, "id">(
+            prevData.safeRollouts,
+            response.safeRollouts,
+            "id",
+          ),
+          codeRefs: response.codeRefs,
+          holdout: response.holdout,
+        }));
+        setError(null);
+      } catch (err) {
+        setError(err.message || "An error occurred while fetching data.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fid, apiCall], // Dependencies of fetchData
+  );
+
+  // Fetch data on initial load and when the version changes if the version is not in revisions
+  useEffect(() => {
+    let extraQueryString = "";
+    if (version) {
+      extraQueryString = `?v=${version}`;
+      if (revisions.some((r) => r.version === version)) {
+        return;
+      }
+    } else {
+      // If no version is set, the page just loaded and we want to fetch the data for the first time
+      // Though fetchData will set the revsions, so to avoid fetching twice on page load we check
+      // whether fetchData has already been called by checking if revisions exist
+      if (revisions && revisions.length > 0) {
+        return;
+      }
+      // Version being forced via querystring
+      if ("v" in router.query) {
+        const v = parseInt(router.query.v as string);
+        if (v) {
+          extraQueryString = `?v=${v}`;
+        }
+      }
+    }
+    fetchData(extraQueryString);
+  }, [fid, version, revisions, router, fetchData]);
+
+  const [tab, setTab] = useLocalStorage<FeatureTab>(
+    `tabbedPageTab__${fid}`,
+    "overview",
+  );
+
+  const setTabAndScroll = (tab: FeatureTab) => {
+    setTab(tab);
+    const newUrl = window.location.href.replace(/#.*/, "") + "#" + tab;
+    if (newUrl === window.location.href) return;
+    window.history.pushState("", "", newUrl);
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
+
+  useEffect(() => {
+    const handler = () => {
+      const hash = window.location.hash.replace(/^#/, "") as FeatureTab;
+      if (featureTabs.includes(hash)) {
+        setTab(hash);
+      }
+    };
+    handler();
+    window.addEventListener("hashchange", handler, false);
+    return () => window.removeEventListener("hashchange", handler, false);
+  }, [setTab]);
+
+  // Set the initial version (once we have the data) based on the query string or the active draft
+  useEffect(() => {
+    if (!revisions || !baseFeatureVersion) return;
+    if (version) return;
+
+    // Version being forced via querystring
+    if ("v" in router.query) {
+      const v = parseInt(router.query.v as string);
+      if (v && revisions.some((r) => r.version === v)) {
+        setVersion(v);
+        return;
+      }
+    }
+
+    // If there's an active draft, show that by default, otherwise show the live version
+    const draft = revisions.find(
+      (r) =>
+        r.status === "draft" ||
+        r.status === "approved" ||
+        r.status === "changes-requested" ||
+        r.status === "pending-review",
+    );
+    setVersion(draft ? draft.version : baseFeatureVersion);
+  }, [revisions, version, router.query, baseFeatureVersion]);
+
+  const environments = useMemo(
+    () =>
+      baseFeature
+        ? filterEnvironmentsByFeature(allEnvironments, baseFeature)
+        : [],
+    [allEnvironments, baseFeature],
+  );
+  const envs = environments.map((e) => e.id);
+
+  const revision = useMemo<FeatureRevisionInterface | null>(() => {
+    if (!revisions || !version || !baseFeature) return null;
+    const match = revisions.find((r) => r.version === version);
+    if (match) {
+      setLastDisplayedVersion(match.version);
+      return match;
+    } else if (lastDisplayedVersion) {
+      // Keep showing the most recently displayed version until the data is fetched
+      const lastMatch = revisions.find(
+        (r) => r.version === lastDisplayedVersion,
+      );
+      if (lastMatch) {
+        return lastMatch;
+      }
+    }
+
+    // If we can't find the revision, create a dummy revision just so the page can render
+    // This is for old features that don't have any revision history saved
+    const rules: Record<string, FeatureRule[]> = {};
+    environments.forEach((env) => {
+      rules[env.id] = baseFeature.environmentSettings?.[env.id]?.rules || [];
+    });
+    return {
+      baseVersion: baseFeature.version,
+      comment: "",
+      createdBy: null,
+      dateCreated: baseFeature.dateCreated,
+      datePublished: baseFeature.dateCreated,
+      dateUpdated: baseFeature.dateUpdated,
+      defaultValue: baseFeature.defaultValue,
+      featureId: baseFeature.id,
+      organization: baseFeature.organization,
+      publishedBy: null,
+      rules: rules,
+      status: "published",
+      version: baseFeature.version,
+      prerequisites: baseFeature.prerequisites || [],
+    };
+  }, [revisions, version, environments, baseFeature, lastDisplayedVersion]);
+
+  const feature = useMemo(() => {
+    if (!revision || !baseFeature) return null;
+    return revision.version !== baseFeature.version
+      ? mergeRevision(
+          baseFeature,
+          revision,
+          environments.map((e) => e.id),
+        )
+      : baseFeature;
+  }, [baseFeature, revision, environments]);
+
+  const dependentFeatures = useMemo(() => {
+    if (!feature || !features) return [];
+    return getDependentFeatures(feature, features, envs);
+  }, [feature, features, envs]);
+
+  const dependentExperiments = useMemo(() => {
+    if (!feature || !allExperiments) return [];
+    return getDependentExperiments(feature, allExperiments);
+  }, [feature, allExperiments]);
+
+  const dependents = dependentFeatures.length + dependentExperiments.length;
 
   if (error) {
-    return (
-      <div className="alert alert-danger">
-        An error occurred: {error.message}
-      </div>
-    );
+    return <div className="alert alert-danger">An error occurred: {error}</div>;
   }
-  if (!data) {
+
+  if (!data || !feature || !revision || !baseFeature) {
     return <LoadingOverlay />;
   }
 
-  const type = data.feature.valueType;
-
-  const isDraft = !!data.feature.draft?.active;
-  const isArchived = data.feature.archived;
-
-  const enabledEnvs = getEnabledEnvironments(data.feature);
-
-  const projectId = data.feature.project;
-  const project = getProjectById(projectId || "");
-  const projectName = project?.name || null;
-  const projectIsOprhaned = projectId && !projectName;
-
-  const hasDraftPublishPermission =
-    isDraft &&
-    permissions.check(
-      "publishFeatures",
-      projectId,
-      // @ts-expect-error TS(2532) If you come across this, please fix it!: Object is possibly 'undefined'.
-      "defaultValue" in data.feature.draft
-        ? getEnabledEnvironments(data.feature)
-        : getAffectedEnvs(
-            data.feature,
-            Object.keys(data.feature.draft?.rules || {})
-          )
-    );
-
-  const sdkConnections = sdkConnectionsData?.connections;
-  const hasProxiedConnections = sdkConnections?.some((c) => {
-    return !isCloud() ? c.proxy.enabled && c.proxy.host : c.sseEnabled;
-  });
-  const hasUnproxiedConnections =
-    sdkConnections?.some((c) => {
-      return !(!isCloud() ? c.proxy.enabled && c.proxy.host : c.sseEnabled);
-    }) || sdkConnections?.length === 0;
-
-  const rolloutDelayNotice = (
-    <div className="text-left">
-      <p className="font-weight-bolder mb-2">
-        <FaCheckCircle /> Changes published
-      </p>
-      <div className="mb-2">
-        {hasProxiedConnections ? (
-          <>
-            <p className="mb-1">
-              You currently have{" "}
-              {isCloud() ? "Streaming Updates" : "GrowthBook Proxy"} enabled on{" "}
-              {hasUnproxiedConnections ? "some" : "all"} of your SDK
-              Connections. For these connections, feature updates will be
-              deployed instantly to subscribed SDKs.
-            </p>
-            {hasUnproxiedConnections ? (
-              <p className="mb-1">
-                For your other connections, feature updates may take up to 60
-                seconds to deploy, and additional delays may occur for cached
-                SDK instances.
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <p className="mb-1">
-            Feature updates may take up to 60 seconds to deploy. Additional
-            delays may occur for cached SDK instances.
-          </p>
-        )}
-      </div>
-      {isCloud() ? (
-        <div className="mt-0">
-          To use instant feature deployments, enable{" "}
-          <strong>
-            <BsLightningFill className="text-warning-orange" />
-            Streaming Updates
-          </strong>{" "}
-          in your <Link href="/sdks">SDK Connections</Link>.
-        </div>
-      ) : (
-        <div className="mt-0">
-          To use instant feature deployments, you may configure{" "}
-          <strong>
-            <BsLightningFill className="text-warning-orange" />
-            GrowthBook Proxy
-          </strong>{" "}
-          for self-hosted users. See the{" "}
-          <Link href="https://docs.growthbook.io/self-host/proxy">
-            GrowthBook Proxy documentation
-          </Link>
-          .
-        </div>
-      )}
-    </div>
-  );
-
   return (
-    <div className="contents container-fluid pagecontents">
-      {edit && (
-        <EditDefaultValueModal
-          close={() => setEdit(false)}
-          feature={data.feature}
-          mutate={mutate}
+    <FeatureUsageProvider feature={feature}>
+      <PageHead
+        breadcrumb={[
+          { display: "Features", href: "/features" },
+          { display: feature.id },
+        ]}
+      />
+      <FeaturesHeader
+        feature={feature}
+        features={features}
+        experiments={experiments}
+        mutate={() => fetchData()}
+        tab={tab}
+        setTab={setTabAndScroll}
+        setEditFeatureInfoModal={setEditFeatureInfoModal}
+        dependents={dependents}
+        holdout={holdout}
+        dependentExperiments={dependentExperiments}
+      />
+
+      {tab === "overview" && (
+        <FeaturesOverview
+          baseFeature={baseFeature}
+          feature={feature}
+          revision={revision}
+          revisionList={data.revisionList}
+          loading={loading}
+          revisions={data.revisions}
+          experiments={experiments}
+          safeRollouts={safeRollouts}
+          holdout={holdout}
+          mutate={() => fetchData()}
+          editProjectModal={editProjectModal}
+          setEditProjectModal={setEditProjectModal}
+          version={version}
+          setVersion={setVersion}
+          dependents={dependents}
+          dependentFeatures={dependentFeatures}
+          dependentExperiments={dependentExperiments}
         />
       )}
-      {editOwnerModal && (
-        <EditOwnerModal
-          cancel={() => setEditOwnerModal(false)}
-          owner={data.feature.owner}
-          save={async (owner) => {
-            await apiCall(`/feature/${data.feature.id}`, {
-              method: "PUT",
-              body: JSON.stringify({ owner }),
-            });
-            mutate();
-          }}
+
+      {tab === "test" && (
+        <FeatureTest
+          baseFeature={baseFeature}
+          feature={feature}
+          revision={revision}
+          revisions={data.revisionList}
+          version={version}
+          setVersion={setVersion}
         />
       )}
-      {ruleModal !== null && (
-        <RuleModal
-          feature={data.feature}
-          close={() => setRuleModal(null)}
-          i={ruleModal.i}
-          environment={ruleModal.environment}
-          mutate={mutate}
-          defaultType={ruleModal.defaultType || ""}
-        />
+
+      {tab === "stats" && (
+        <FeaturesStats orgSettings={orgSettings} codeRefs={data.codeRefs} />
       )}
-      {auditModal && (
-        <Modal
-          open={true}
-          header="Audit Log"
-          close={() => setAuditModal(false)}
-          size="max"
-          closeCta="Close"
-        >
-          <HistoryTable type="feature" id={data.feature.id} />
-        </Modal>
-      )}
-      {editProjectModal && (
-        <EditProjectForm
-          apiEndpoint={`/feature/${data.feature.id}`}
-          cancel={() => setEditProjectModal(false)}
-          mutate={mutate}
-          method="PUT"
-          current={data.feature.project}
-        />
-      )}
+
       {editTagsModal && (
         <EditTagsForm
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string[] | undefined' is not assignable to t... Remove this comment to see the full error message
-          tags={data.feature?.tags}
+          tags={feature.tags || []}
           save={async (tags) => {
-            await apiCall(`/feature/${data.feature.id}`, {
+            await apiCall(`/feature/${feature.id}`, {
               method: "PUT",
               body: JSON.stringify({ tags }),
             });
           }}
           cancel={() => setEditTagsModal(false)}
-          mutate={mutate}
+          mutate={() => fetchData()}
         />
       )}
-      {showImplementation && (
-        <FeatureImplementationModal
-          feature={data.feature}
-          first={firstFeature}
-          close={() => {
-            setShowImplementation(false);
+
+      {editFeatureInfoModal && (
+        <EditFeatureInfoModal
+          resourceType="feature"
+          source="feature-header"
+          dependents={dependents}
+          feature={feature}
+          save={async (updates) => {
+            await apiCall(`/feature/${feature.id}`, {
+              method: "PUT",
+              body: JSON.stringify({ ...updates }),
+            });
           }}
+          cancel={() => setEditFeatureInfoModal(false)}
+          mutate={() => fetchData()}
         />
       )}
-      {draftModal && (
-        <DraftModal
-          feature={data.feature}
-          close={() => setDraftModal(false)}
-          mutate={mutate}
-          onPublish={onPublish}
-        />
-      )}
-      {duplicateModal && (
-        <FeatureModal
-          cta={"Duplicate"}
-          close={() => setDuplicateModal(false)}
-          onSuccess={async (feature) => {
-            const url = `/features/${feature.id}`;
-            router.push(url);
-          }}
-          featureToDuplicate={data.feature}
-        />
-      )}
-
-      {isDraft && (
-        <div
-          className="alert alert-warning mb-3 text-center shadow-sm"
-          style={{ top: 65, position: "sticky", zIndex: 900 }}
-        >
-          <FaExclamationTriangle className="text-warning" /> This feature has
-          unpublished changes.
-          <button
-            className="btn btn-primary ml-3 btn-sm"
-            onClick={(e) => {
-              e.preventDefault();
-              setDraftModal(true);
-            }}
-          >
-            Review{hasDraftPublishPermission && " and Publish"}
-          </button>
-        </div>
-      )}
-
-      {publishedMessage && (
-        <TempMessage
-          close={() => setPublishedMessage(false)}
-          delay={null}
-          top={65}
-          showClose={true}
-        >
-          {rolloutDelayNotice}
-        </TempMessage>
-      )}
-
-      <div className="row align-items-center mb-2">
-        <div className="col-auto">
-          <Link href="/features">
-            <a>
-              <GBCircleArrowLeft /> Back to all features
-            </a>
-          </Link>
-        </div>
-        <div style={{ flex: 1 }} />
-        <div className="col-auto">
-          <RevisionDropdown
-            feature={data.feature}
-            revisions={data.revisions || []}
-            publish={() => {
-              setDraftModal(true);
-            }}
-            mutate={mutate}
-          />
-        </div>
-        <div className="col-auto">
-          <MoreMenu>
-            <a
-              className="dropdown-item"
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                setShowImplementation(true);
-              }}
-            >
-              Show implementation
-            </a>
-            {permissions.check("manageFeatures", projectId) &&
-              permissions.check("publishFeatures", projectId, enabledEnvs) && (
-                <a
-                  className="dropdown-item"
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setDuplicateModal(true);
-                  }}
-                >
-                  Duplicate feature
-                </a>
-              )}
-            {permissions.check("manageFeatures", projectId) &&
-              permissions.check("publishFeatures", projectId, enabledEnvs) && (
-                <DeleteButton
-                  useIcon={false}
-                  displayName="Feature"
-                  onClick={async () => {
-                    await apiCall(`/feature/${data.feature.id}`, {
-                      method: "DELETE",
-                    });
-                    router.push("/features");
-                  }}
-                  className="dropdown-item"
-                  text="Delete feature"
-                />
-              )}
-            {permissions.check("manageFeatures", projectId) &&
-              permissions.check("publishFeatures", projectId, enabledEnvs) && (
-                <ConfirmButton
-                  onClick={async () => {
-                    await apiCall(`/feature/${data.feature.id}/archive`, {
-                      method: "POST",
-                    });
-                    mutate();
-                  }}
-                  modalHeader={
-                    isArchived ? "Unarchive Feature" : "Archive Feature"
-                  }
-                  confirmationText={
-                    isArchived ? (
-                      <>
-                        <p>
-                          Are you sure you want to continue? This will make the
-                          current feature active again.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p>
-                          Are you sure you want to continue? This will make the
-                          current feature inactive. It will not be included in
-                          API responses or Webhook payloads.
-                        </p>
-                      </>
-                    )
-                  }
-                  cta={isArchived ? "Unarchive" : "Archive"}
-                  ctaColor="danger"
-                >
-                  <button className="dropdown-item">
-                    {isArchived ? "Unarchive" : "Archive"} feature
-                  </button>
-                </ConfirmButton>
-              )}
-          </MoreMenu>
-        </div>
-      </div>
-
-      <div>
-        {isArchived && (
-          <div className="alert alert-secondary mb-2">
-            <strong>This feature is archived.</strong> It will not be included
-            in SDK Endpoints or Webhook payloads.
-          </div>
-        )}
-      </div>
-
-      <div className="row align-items-center mb-2">
-        <h1 className="col-auto mb-0">{fid}</h1>
-      </div>
-
-      <div className="mb-2 row">
-        {(projects.length > 0 || projectIsOprhaned) && (
-          <div className="col-auto">
-            Project:{" "}
-            {projectIsOprhaned ? (
-              <Tooltip
-                body={
-                  <>
-                    Project <code>{projectId}</code> not found
-                  </>
-                }
-              >
-                <span className="text-danger">
-                  <FaExclamationTriangle /> Invalid project
-                </span>
-              </Tooltip>
-            ) : projectId ? (
-              <strong>{projectName}</strong>
-            ) : (
-              <em className="text-muted">None</em>
-            )}
-            {permissions.check("manageFeatures", projectId) &&
-              permissions.check("publishFeatures", projectId, enabledEnvs) && (
-                <a
-                  className="ml-2 cursor-pointer"
-                  onClick={() => setEditProjectModal(true)}
-                >
-                  <GBEdit />
-                </a>
-              )}
-          </div>
-        )}
-
-        <div className="col-auto">
-          Tags: <SortedTags tags={data.feature?.tags || []} />
-          {permissions.check("manageFeatures", projectId) && (
-            <a
-              className="ml-1 cursor-pointer"
-              onClick={() => setEditTagsModal(true)}
-            >
-              <GBEdit />
-            </a>
-          )}
-        </div>
-
-        <div className="col-auto">
-          Type: {data.feature.valueType || "unknown"}
-        </div>
-
-        <div className="col-auto">
-          Owner: {data.feature.owner ? data.feature.owner : "None"}
-          {permissions.check("manageFeatures", projectId) && (
-            <a
-              className="ml-1 cursor-pointer"
-              onClick={() => setEditOwnerModal(true)}
-            >
-              <GBEdit />
-            </a>
-          )}
-        </div>
-
-        <div className="col-auto ml-auto">
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              setAuditModal(true);
-            }}
-          >
-            View Audit Log
-          </a>
-        </div>
-        <div className="col-auto">
-          <WatchButton item={data.feature.id} itemType="feature" type="link" />
-        </div>
-      </div>
-
-      <div className="mb-3">
-        <div className={data.feature.description ? "appbox mb-4 p-3" : ""}>
-          <MarkdownInlineEdit
-            // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-            value={data.feature.description}
-            canEdit={permissions.check("manageFeatures", projectId)}
-            canCreate={permissions.check("manageFeatures", projectId)}
-            save={async (description) => {
-              await apiCall(`/feature/${data.feature.id}`, {
-                method: "PUT",
-                body: JSON.stringify({
-                  description,
-                }),
-              });
-              track("Update Feature Description");
-              mutate();
-            }}
-          />
-        </div>
-      </div>
-
-      <h3>Enabled Environments</h3>
-      <div className="appbox mb-4 p-3">
-        <div className="row mb-2">
-          {environments.map((en) => (
-            <div className="col-auto" key={en.id}>
-              <label
-                className="font-weight-bold mr-2"
-                htmlFor={`${en.id}_toggle`}
-              >
-                {en.id}:{" "}
-              </label>
-              <EnvironmentToggle
-                feature={data.feature}
-                environment={en.id}
-                mutate={() => {
-                  mutate();
-                  onPublish();
-                }}
-                id={`${en.id}_toggle`}
-              />
-            </div>
-          ))}
-        </div>
-        <div>
-          In a disabled environment, the feature will always evaluate to{" "}
-          <code>null</code>. The default value and override rules will be
-          ignored.
-        </div>
-      </div>
-
-      <h3>
-        Default Value
-        {permissions.check("createFeatureDrafts", projectId) && (
-          <a className="ml-2 cursor-pointer" onClick={() => setEdit(true)}>
-            <GBEdit />
-          </a>
-        )}
-      </h3>
-      <div className="appbox mb-4 p-3">
-        <ForceSummary
-          type={type}
-          // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-          value={getFeatureDefaultValue(data.feature)}
-        />
-      </div>
-
-      <h3>Override Rules</h3>
-      <p>
-        Add powerful logic on top of your feature. The first matching rule
-        applies and overrides the default value.
-      </p>
-
-      <ControlledTabs
-        // @ts-expect-error TS(2322) If you come across this, please fix it!: Type 'Dispatch<SetStateAction<string>>' is not ass... Remove this comment to see the full error message
-        setActive={setEnv}
-        active={env}
-        showActiveCount={true}
-        newStyle={false}
-        buttonsClassName="px-3 py-2 h4"
-      >
-        {environments.map((e) => {
-          const rules = getRules(data.feature, e.id);
-          return (
-            <Tab
-              key={e.id}
-              id={e.id}
-              display={e.id}
-              count={rules.length}
-              padding={false}
-            >
-              <div className="border mb-4 border-top-0">
-                {rules.length > 0 ? (
-                  <RuleList
-                    environment={e.id}
-                    feature={data.feature}
-                    experiments={data.experiments || {}}
-                    mutate={mutate}
-                    setRuleModal={setRuleModal}
-                  />
-                ) : (
-                  <div className="p-3 bg-white">
-                    <em>No override rules for this environment yet</em>
-                  </div>
-                )}
-              </div>
-            </Tab>
-          );
-        })}
-      </ControlledTabs>
-
-      {permissions.check("createFeatureDrafts", projectId) && (
-        <div className="row">
-          <div className="col mb-3">
-            <div
-              className="bg-white border p-3 d-flex flex-column"
-              style={{ height: "100%" }}
-            >
-              <h4>Forced Value</h4>
-              <p>Target groups of users and give them all the same value.</p>
-              <div style={{ flex: 1 }} />
-              <div>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setRuleModal({
-                      environment: env,
-                      i: getRules(data.feature, env).length,
-                      defaultType: "force",
-                    });
-                    track("Viewed Rule Modal", {
-                      source: "add-rule",
-                      type: "force",
-                    });
-                  }}
-                >
-                  <span className="h4 pr-2 m-0 d-inline-block align-top">
-                    <GBAddCircle />
-                  </span>
-                  Add Forced Rule
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="col mb-3">
-            <div
-              className="bg-white border p-3 d-flex flex-column"
-              style={{ height: "100%" }}
-            >
-              <h4>Percentage Rollout</h4>
-              <p>Release to a small percent of users while you monitor logs.</p>
-              <div style={{ flex: 1 }} />
-              <div>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setRuleModal({
-                      environment: env,
-                      i: getRules(data.feature, env).length,
-                      defaultType: "rollout",
-                    });
-                    track("Viewed Rule Modal", {
-                      source: "add-rule",
-                      type: "rollout",
-                    });
-                  }}
-                >
-                  <span className="h4 pr-2 m-0 d-inline-block align-top">
-                    <GBAddCircle />
-                  </span>
-                  Add Rollout Rule
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="col mb-3">
-            <div
-              className="bg-white border p-3 d-flex flex-column"
-              style={{ height: "100%" }}
-            >
-              <h4>A/B Experiment</h4>
-              <p>Measure the impact of this feature on your key metrics.</p>
-              <div style={{ flex: 1 }} />
-              <div>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setRuleModal({
-                      environment: env,
-                      i: getRules(data.feature, env).length,
-                      defaultType: "experiment",
-                    });
-                    track("Viewed Rule Modal", {
-                      source: "add-rule",
-                      type: "experiment",
-                    });
-                  }}
-                >
-                  <span className="h4 pr-2 m-0 d-inline-block align-top">
-                    <GBAddCircle />
-                  </span>
-                  Add Experiment Rule
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="mb-4">
-        <h3>Comments</h3>
-        <DiscussionThread
-          type="feature"
-          id={data.feature.id}
-          project={data.feature.project}
-        />
-      </div>
-    </div>
+    </FeatureUsageProvider>
   );
 }

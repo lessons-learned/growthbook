@@ -8,11 +8,11 @@ import useSwitchOrg from "@/services/useSwitchOrg";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import useApi from "@/hooks/useApi";
 const DynamicPresentation = dynamic(
-  () => import("../../components/Share/Presentation"),
+  () => import("@/components/Share/Presentation"),
   {
     ssr: false,
     //loading: () => (<p>Loading...</p>) // this causes a lint error
-  }
+  },
 );
 
 const PresentPage = (): React.ReactElement => {
@@ -26,9 +26,7 @@ const PresentPage = (): React.ReactElement => {
       snapshot?: ExperimentSnapshotInterface;
     }[];
   }>(`/presentation/${pid}`);
-
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
-  useSwitchOrg(pdata?.presentation?.organization);
+  useSwitchOrg(pdata?.presentation?.organization || null);
 
   if (error) {
     return <div className="alert alert-danger">An error occurred</div>;

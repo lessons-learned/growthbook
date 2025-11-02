@@ -1,7 +1,13 @@
-import { EventAuditUser } from "../src/events/event-types";
-import { AuditInterface } from "./audit";
+import {
+  AutoExperiment,
+  FeatureRule as FeatureDefinitionRule,
+} from "@growthbook/growthbook";
+import { EventUser } from "back-end/src/events/event-types";
+import { PermissionFunctions } from "back-end/src/types/AuthRequest";
+import { AuditInterfaceInput } from "./audit";
 import { ExperimentStatus } from "./experiment";
-import { OrganizationInterface } from "./organization";
+import { OrganizationInterface, ReqContext } from "./organization";
+import { UserInterface } from "./user";
 
 export interface ExperimentOverride {
   weights?: number[];
@@ -12,25 +18,23 @@ export interface ExperimentOverride {
   url?: string;
 }
 
-export interface FeatureDefinitionRule {
-  // eslint-disable-next-line
-  force?: any;
-  weights?: number[];
-  // eslint-disable-next-line
-  variations?: any[];
-  hashAttribute?: string;
-  namespace?: [string, number, number];
-  key?: string;
-  coverage?: number;
-  // eslint-disable-next-line
-  condition?: any;
-}
-
 export interface FeatureDefinition {
   // eslint-disable-next-line
   defaultValue: any;
   rules?: FeatureDefinitionRule[];
 }
+
+export type FeatureDefinitionWithProject = FeatureDefinition & {
+  project?: string;
+};
+
+export type FeatureDefinitionWithProjects = FeatureDefinition & {
+  projects?: string[];
+};
+
+export type AutoExperimentWithProject = AutoExperiment & {
+  project?: string;
+};
 
 export interface ExperimentOverridesResponse {
   status: 200;
@@ -43,12 +47,14 @@ export interface ErrorResponse {
   error: string;
 }
 
-export interface ApiRequestLocals {
+export type ApiRequestLocals = PermissionFunctions & {
   apiKey: string;
+  user?: UserInterface;
   organization: OrganizationInterface;
-  eventAudit: EventAuditUser;
-  audit: (data: Partial<AuditInterface>) => Promise<void>;
-}
+  eventAudit: EventUser;
+  audit: (data: AuditInterfaceInput) => Promise<void>;
+  context: ApiReqContext;
+};
 
 export interface ApiErrorResponse {
   message: string;
@@ -61,3 +67,5 @@ export interface PrivateApiErrorResponse {
   status: number;
   message: string;
 }
+
+export type ApiReqContext = ReqContext;

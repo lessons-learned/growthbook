@@ -13,11 +13,9 @@ type DataSourceEditExperimentEventPropertiesProps = {
   onCancel: () => void;
 };
 
-export const DataSourceEditExperimentEventPropertiesModal: FC<DataSourceEditExperimentEventPropertiesProps> = ({
-  dataSource,
-  onCancel,
-  onSave,
-}) => {
+export const DataSourceEditExperimentEventPropertiesModal: FC<
+  DataSourceEditExperimentEventPropertiesProps
+> = ({ dataSource, onCancel, onSave }) => {
   const form = useForm<DataSourceEvents>({
     defaultValues: {
       experimentEvent: dataSource.settings?.events?.experimentEvent || "",
@@ -49,6 +47,7 @@ export const DataSourceEditExperimentEventPropertiesModal: FC<DataSourceEditExpe
 
   return (
     <Modal
+      trackingEventModalType=""
       open={true}
       submit={handleSubmit}
       close={onCancel}

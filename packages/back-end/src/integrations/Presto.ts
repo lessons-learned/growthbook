@@ -1,22 +1,21 @@
 /// <reference types="../../typings/presto-client" />
 import { Client, IPrestoClientOptions } from "presto-client";
-import { decryptDataSourceParams } from "../services/datasource";
-import { PrestoConnectionParams } from "../../types/integrations/presto";
-import { FormatDialect } from "../util/sql";
-import { MissingDatasourceParamsError } from "../types/Integration";
+import { FormatDialect } from "shared/src/types";
+import { QueryStatistics } from "back-end/types/query";
+import { decryptDataSourceParams } from "back-end/src/services/datasource";
+import { PrestoConnectionParams } from "back-end/types/integrations/presto";
+import { QueryResponse } from "back-end/src/types/Integration";
 import SqlIntegration from "./SqlIntegration";
 
 // eslint-disable-next-line
 type Row = any;
 
 export default class Presto extends SqlIntegration {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-expect-error
-  params: PrestoConnectionParams;
+  params!: PrestoConnectionParams;
+  requiresSchema = false;
   setParams(encryptedParams: string) {
-    this.params = decryptDataSourceParams<PrestoConnectionParams>(
-      encryptedParams
-    );
+    this.params =
+      decryptDataSourceParams<PrestoConnectionParams>(encryptedParams);
   }
   getFormatDialect(): FormatDialect {
     return "trino";
@@ -27,20 +26,26 @@ export default class Presto extends SqlIntegration {
   toTimestamp(date: Date) {
     return `from_iso8601_timestamp('${date.toISOString()}')`;
   }
-  runQuery(sql: string) {
+  runQuery(sql: string): Promise<QueryResponse> {
     const configOptions: IPrestoClientOptions = {
       host: this.params.host,
       port: this.params.port,
       user: "growthbook",
-      source: "nodejs-client",
-      basic_auth: {
-        user: this.params.username,
-        password: this.params.password,
-      },
+      source: this.params?.source || "growthbook",
       schema: this.params.schema,
       catalog: this.params.catalog,
+      timeout: this.params.requestTimeout ?? 0,
       checkInterval: 500,
     };
+    if (!this.params?.authType || this.params?.authType === "basicAuth") {
+      configOptions.basic_auth = {
+        user: this.params.username || "",
+        password: this.params.password || "",
+      };
+    }
+    if (this.params?.authType === "customAuth") {
+      configOptions.custom_auth = this.params.customAuth || "";
+    }
     if (this.params?.ssl) {
       configOptions.ssl = {
         ca: this.params?.caCert,
@@ -51,9 +56,10 @@ export default class Presto extends SqlIntegration {
     }
     const client = new Client(configOptions);
 
-    return new Promise<Row[]>((resolve, reject) => {
+    return new Promise<QueryResponse>((resolve, reject) => {
       let cols: string[];
       const rows: Row[] = [];
+      const statistics: QueryStatistics = {};
 
       client.execute({
         query: sql,
@@ -66,7 +72,7 @@ export default class Presto extends SqlIntegration {
         error: (error) => {
           reject(error);
         },
-        data: (error, data) => {
+        data: (error, data, _, stats) => {
           if (error) return;
 
           data.forEach((d) => {
@@ -76,9 +82,21 @@ export default class Presto extends SqlIntegration {
             });
             rows.push(row);
           });
+
+          if (stats) {
+            statistics.executionDurationMs = Number(stats.wallTimeMillis);
+            statistics.bytesProcessed = Number(stats.processedBytes);
+            statistics.rowsProcessed = Number(stats.processedRows);
+          }
         },
         success: () => {
-          resolve(rows);
+          resolve({
+            rows,
+            columns: cols.map((col) => ({
+              name: col,
+            })),
+            statistics,
+          });
         },
       });
     });
@@ -87,7 +105,7 @@ export default class Presto extends SqlIntegration {
     col: string,
     unit: "hour" | "minute",
     sign: "+" | "-",
-    amount: number
+    amount: number,
   ): string {
     return `${col} ${sign} INTERVAL '${amount}' ${unit}`;
   }
@@ -100,20 +118,22 @@ export default class Presto extends SqlIntegration {
   dateDiff(startCol: string, endCol: string) {
     return `date_diff('day', ${startCol}, ${endCol})`;
   }
-  useAliasInGroupBy(): boolean {
-    return false;
-  }
   ensureFloat(col: string): string {
     return `CAST(${col} AS DOUBLE)`;
   }
-  getInformationSchemaFromClause(): string {
-    if (!this.params.catalog)
-      throw new MissingDatasourceParamsError(
-        "To view the information schema for a Presto data source, you must define a default catalog. Please add a default catalog by editing the datasource's connection settings."
-      );
-    return `${this.params.catalog}.information_schema.columns`;
+  hasCountDistinctHLL(): boolean {
+    return true;
   }
-  getInformationSchemaTableFromClause(databaseName: string): string {
-    return `${databaseName}.information_schema.columns`;
+  hllAggregate(col: string): string {
+    return `APPROX_SET(${col})`;
+  }
+  hllReaggregate(col: string): string {
+    return `MERGE(${col})`;
+  }
+  hllCardinality(col: string): string {
+    return `CARDINALITY(${col})`;
+  }
+  getDefaultDatabase() {
+    return this.params.catalog || "";
   }
 }

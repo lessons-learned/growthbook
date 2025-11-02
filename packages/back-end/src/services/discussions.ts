@@ -1,11 +1,16 @@
 import uniqid from "uniqid";
-import { Comment, DiscussionParentType } from "../../types/discussion";
-import { DiscussionModel } from "../models/DiscussionModel";
+import { Comment, DiscussionParentType } from "back-end/types/discussion";
+import { DiscussionModel } from "back-end/src/models/DiscussionModel";
+import { getExperimentById } from "back-end/src/models/ExperimentModel";
+import { getFeature } from "back-end/src/models/FeatureModel";
+import { getMetricById } from "back-end/src/models/MetricModel";
+import { ReqContext } from "back-end/types/organization";
+import { getIdeaById } from "./ideas";
 
 export async function getDiscussionByParent(
   organization: string,
   parentType: DiscussionParentType,
-  parentId: string
+  parentId: string,
 ) {
   return await DiscussionModel.findOne({
     organization,
@@ -20,9 +25,57 @@ export async function getAllDiscussionsByOrg(organization: string) {
   });
 }
 
+export async function getProjectsByParentId(
+  context: ReqContext,
+  parentType: DiscussionParentType,
+  parentId: string,
+): Promise<string[]> {
+  switch (parentType) {
+    case "experiment": {
+      const experiment = await getExperimentById(context, parentId);
+
+      if (!experiment) {
+        throw new Error("Experiment not found");
+      }
+
+      return experiment.project ? [experiment.project] : [];
+    }
+
+    case "feature": {
+      const feature = await getFeature(context, parentId);
+
+      if (!feature) {
+        throw Error("Feature not found");
+      }
+
+      return feature.project ? [feature.project] : [];
+    }
+
+    case "idea": {
+      const idea = await getIdeaById(parentId);
+
+      if (!idea) {
+        throw Error("Idea not found");
+      }
+
+      return idea.project ? [idea.project] : [];
+    }
+
+    case "metric": {
+      const metric = await getMetricById(context, parentId);
+
+      if (!metric) {
+        throw new Error("Metric not found");
+      }
+
+      return metric.projects || [];
+    }
+  }
+}
+
 export async function getAllDiscussionsByOrgFromDate(
   organization: string,
-  date: Date
+  date: Date,
 ) {
   return await DiscussionModel.find({
     organization,
@@ -43,7 +96,7 @@ export async function addComment(
   parentType: DiscussionParentType,
   parentId: string,
   user: { id: string; email: string; name: string },
-  comment: string
+  comment: string,
 ) {
   const newComment: Comment = {
     content: comment,
@@ -56,7 +109,7 @@ export async function addComment(
   const discussion = await getDiscussionByParent(
     organization,
     parentType,
-    parentId
+    parentId,
   );
   // Comment thread already exists
   if (discussion && discussion.id) {

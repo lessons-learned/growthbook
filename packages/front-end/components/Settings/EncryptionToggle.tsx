@@ -1,9 +1,10 @@
 import React from "react";
+import { FaExclamationCircle, FaInfoCircle } from "react-icons/fa";
 import { useUser } from "@/services/UserContext";
-import { DocLink } from "../DocLink";
-import Toggle from "../Forms/Toggle";
-import UpgradeMessage from "../Marketing/UpgradeMessage";
-import PremiumTooltip from "../Marketing/PremiumTooltip";
+import { DocLink } from "@/components/DocLink";
+import Switch from "@/ui/Switch";
+import UpgradeMessage from "@/components/Marketing/UpgradeMessage";
+import PremiumTooltip from "@/components/Marketing/PremiumTooltip";
 
 type Props = {
   value: boolean;
@@ -28,16 +29,36 @@ export default function EncryptionToggle({
     <div className="mt-4">
       <div className="form-group">
         <label htmlFor="encryptSDK">
-          <PremiumTooltip commercialFeature="encrypt-features-endpoint">
-            Encrypt this endpoint&apos;s response?
+          <PremiumTooltip
+            commercialFeature="encrypt-features-endpoint"
+            body={
+              <>
+                <p>
+                  Feature payloads will be encrypted via the AES encryption
+                  algorithm. When evaluating feature flags in a public or
+                  insecure environment (such as a browser), encryption provides
+                  an additional layer of security through obfuscation. This
+                  allows you to target users based on sensitive attributes.
+                </p>
+                <p className="mb-0 text-warning-orange small">
+                  <FaExclamationCircle /> When using an insecure environment, do
+                  not rely exclusively on payload encryption as a means of
+                  securing highly sensitive data. Because the client performs
+                  the decryption, the unencrypted payload may be extracted with
+                  sufficient effort.
+                </p>
+              </>
+            }
+          >
+            Encrypt this endpoint&apos;s response? <FaInfoCircle />
           </PremiumTooltip>
         </label>
         <div className="row mb-4">
-          <div className="col-md-3 mt-1">
-            <Toggle
+          <div className="col-md-3">
+            <Switch
               id={"encryptSDK"}
               value={!!value}
-              setValue={setValue}
+              onChange={setValue}
               disabled={!hasFeature}
             />
           </div>

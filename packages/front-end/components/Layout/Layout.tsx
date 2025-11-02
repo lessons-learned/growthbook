@@ -2,88 +2,114 @@ import Link from "next/link";
 import { useState } from "react";
 import clsx from "clsx";
 import { useRouter } from "next/router";
-import { BsFlag, BsClipboardCheck, BsLightbulb, BsPlug } from "react-icons/bs";
-import { FaArrowRight } from "react-icons/fa";
+import { BsFlag, BsClipboardCheck, BsCodeSlash, BsHouse } from "react-icons/bs";
+import { useGrowthBook } from "@growthbook/growthbook-react";
+import { Flex } from "@radix-ui/themes";
 import { getGrowthBookBuild } from "@/services/env";
 import { useUser } from "@/services/UserContext";
-import useOrgSettings from "../../hooks/useOrgSettings";
-import { GBExperiment, GBPremiumBadge, GBSettings } from "../Icons";
-import { inferDocUrl } from "../DocLink";
-import UpgradeModal from "../Settings/UpgradeModal";
+import useOrgSettings from "@/hooks/useOrgSettings";
+import {
+  GBDatabase,
+  GBExperiment,
+  GBLibrary,
+  GBProductAnalytics,
+  GBSettings,
+} from "@/components/Icons";
+import { inferDocUrl } from "@/components/DocLink";
+import UpgradeModal from "@/components/Settings/UpgradeModal";
+import { AppFeatures } from "@/types/app-features";
+import { WhiteButton } from "@/ui/Button";
+import usePermissionsUtil from "@/hooks/usePermissionsUtils";
 import ProjectSelector from "./ProjectSelector";
 import SidebarLink, { SidebarLinkProps } from "./SidebarLink";
 import TopNav from "./TopNav";
 import styles from "./Layout.module.scss";
+import { usePageHead } from "./PageHead";
+import { useSidebarOpen } from "./SidebarOpenProvider";
 
-// move experiments inside of 'analysis' menu
 const navlinks: SidebarLinkProps[] = [
   {
-    name: "Get Started",
-    href: "/getstarted",
-    Icon: BsLightbulb,
-    path: /^getstarted/,
+    name: "Home",
+    href: "/",
+    Icon: BsHouse,
+    path: /^$/,
     className: styles.first,
   },
   {
     name: "Features",
     href: "/features",
     Icon: BsFlag,
-    path: /^(features|attributes|namespaces|environments|saved-groups|sdks)/,
-    autoClose: true,
+    path: /^(features)/,
+  },
+  {
+    name: "Experimentation",
+    href: "/experiments",
+    path: /^(experiments|experiment\/|bandit|namespaces|power-calculator)/,
+    Icon: GBExperiment,
+    navigateOnExpand: true,
     subLinks: [
       {
-        name: "All Features",
-        href: "/features",
-        path: /^features/,
+        name: "Experiments",
+        href: "/experiments",
+        path: /^(experiments(\/(?!templates|explore)|$)|experiment\/)/,
       },
       {
-        name: "SDKs",
-        href: "/sdks",
-        path: /^sdks/,
+        name: "Bandits",
+        href: "/bandits",
+        //Icon: GBBandit,
+        path: /^bandit/,
+        filter: ({ gb }) => !!gb?.isOn("bandits"),
       },
       {
-        name: "Attributes",
-        href: "/attributes",
-        path: /^attributes/,
+        name: "Holdouts",
+        href: "/holdouts",
+        path: /^holdouts/,
+        filter: ({ gb }) => !!gb?.isOn("holdouts_feature"),
+      },
+      {
+        name: "Templates",
+        href: "/experiments/templates",
+        path: /^experiments\/templates/,
+      },
+      {
+        name: "Power Calculator",
+        href: "/power-calculator",
+        path: /^power-calculator/,
       },
       {
         name: "Namespaces",
         href: "/namespaces",
         path: /^namespaces/,
       },
-      {
-        name: "Environments",
-        href: "/environments",
-        path: /^environments/,
-      },
-      {
-        name: "Saved Groups",
-        href: "/saved-groups",
-        path: /^saved-groups/,
-      },
+      // {
+      //   name: "Search",
+      //   href: "/experiments/explore",
+      //   path: /^experiments\/explore/,
+      // },
     ],
   },
   {
-    name: "Analysis",
-    href: "/experiments",
-    Icon: GBExperiment,
-    path: /^(experiment|metric|segment|dimension|datasources)/,
+    name: "Metrics and Data",
+    href: "/metrics",
+    path: /^(metric\/|metrics|segment|dimension|datasources|fact-|metric-group|sql-explorer)/,
     autoClose: true,
+    Icon: GBDatabase,
     subLinks: [
-      {
-        name: "Experiments",
-        href: "/experiments",
-        path: /^experiment/,
-      },
       {
         name: "Metrics",
         href: "/metrics",
-        path: /^metric/,
+        path: /^(metric\/|metrics|fact-metric|metric-group)/,
+      },
+      {
+        name: "Fact Tables",
+        href: "/fact-tables",
+        path: /^fact-tables/,
       },
       {
         name: "Segments",
         href: "/segments",
         path: /^segment/,
+        filter: ({ segments }) => segments.length > 0,
       },
       {
         name: "Dimensions",
@@ -95,7 +121,64 @@ const navlinks: SidebarLinkProps[] = [
         href: "/datasources",
         path: /^datasources/,
       },
+      {
+        name: "SQL Explorer",
+        href: "/sql-explorer",
+        path: /^sql-explorer/,
+        filter: ({ gb }) => !!gb?.isOn("sql-explorer"),
+      },
     ],
+  },
+  {
+    name: "Product Analytics",
+    href: "/product-analytics/dashboards",
+    path: /^(product-analytics\/dashboards)/,
+    Icon: GBProductAnalytics,
+    filter: ({ gb }) => !!gb?.isOn("general-dashboards"),
+  },
+  {
+    name: "Insights",
+    href: "/dashboard",
+    Icon: GBLibrary,
+    path: /^(dashboard|learnings|timeline|metric-effect|correlations|presentation)/,
+    subLinks: [
+      {
+        name: "Dashboard",
+        href: "/dashboard",
+        path: /^dashboard/,
+      },
+      {
+        name: "Learnings",
+        href: "/learnings",
+        path: /^learnings/,
+      },
+      {
+        name: "Timeline",
+        href: "/timeline",
+        path: /^(timeline)/,
+      },
+      // {
+      //   name: "Interaction Effects",
+      //   href: "/interactions",
+      //   path: /^(interaction)/,
+      // },
+      {
+        name: "Metric Effects",
+        href: "/metric-effects",
+        path: /^(metric-effect)/,
+      },
+      {
+        name: "Metric Correlations",
+        href: "/correlations",
+        path: /^(correlations)/,
+      },
+      {
+        name: "Presentations",
+        href: "/presentations",
+        path: /^presentation/,
+      },
+    ],
+    filter: ({ gb }) => !!gb?.isOn("insights"),
   },
   {
     name: "Management",
@@ -120,20 +203,44 @@ const navlinks: SidebarLinkProps[] = [
         path: /^presentation/,
       },
     ],
+    filter: ({ gb }) => !gb?.isOn("insights"),
   },
   {
-    name: "Integrations",
-    href: "/integrations",
-    Icon: BsPlug,
-    path: /^(integrations)/,
+    name: "SDK Configuration",
+    href: "/sdks",
+    path: /^(attributes|environments|saved-groups|sdks|archetypes)/,
     autoClose: true,
-    feature: "slack-integration",
+    Icon: BsCodeSlash,
     subLinks: [
       {
-        name: "Slack",
-        href: "/integrations/slack",
-        path: /^integrations\/slack/,
-        feature: "slack-integration",
+        name: "SDK Connections",
+        href: "/sdks",
+        path: /^sdks/,
+      },
+      {
+        name: "Attributes",
+        href: "/attributes",
+        path: /^attributes/,
+      },
+      {
+        name: "Environments",
+        href: "/environments",
+        path: /^environments/,
+      },
+      {
+        name: "Saved Groups",
+        href: "/saved-groups",
+        path: /^saved-groups/,
+      },
+      {
+        name: "Archetypes",
+        href: "/archetypes",
+        path: /^archetypes/,
+      },
+      {
+        name: "Exposures Debugger",
+        href: "/exposure-debugger",
+        path: /^exposure-debugger/,
       },
     ],
   },
@@ -141,75 +248,124 @@ const navlinks: SidebarLinkProps[] = [
     name: "Settings",
     href: "/settings",
     Icon: GBSettings,
-    path: /^(settings|admin|projects)/,
+    path: /^(settings|admin|projects|integrations)/,
     autoClose: true,
-    permissions: [
-      "organizationSettings",
-      "manageTeam",
-      "manageTags",
-      "manageApiKeys",
-      "manageBilling",
-      "manageWebhooks",
-    ],
     subLinks: [
       {
         name: "General",
         href: "/settings",
         path: /^settings$/,
-        permissions: ["organizationSettings"],
+        filter: ({ permissionsUtils }) =>
+          permissionsUtils.canManageOrgSettings(),
       },
       {
-        name: "Team",
+        name: "Members",
         href: "/settings/team",
         path: /^settings\/team/,
-        permissions: ["manageTeam"],
+        filter: ({ permissionsUtils }) => permissionsUtils.canManageTeam(),
       },
       {
         name: "Tags",
         href: "/settings/tags",
         path: /^settings\/tags/,
-        permissions: ["manageTags"],
+        filter: ({ permissionsUtils }) =>
+          permissionsUtils.canCreateAndUpdateTag() ||
+          permissionsUtils.canDeleteTag(),
       },
       {
         name: "Projects",
         href: "/projects",
         path: /^project/,
-        permissions: ["manageProjects"],
+        filter: ({ permissionsUtils }) =>
+          permissionsUtils.canManageSomeProjects(),
+      },
+      {
+        name: "Custom Fields",
+        href: "/settings/customfields",
+        path: /^settings\/customfields/,
       },
       {
         name: "API Keys",
         href: "/settings/keys",
         path: /^settings\/keys/,
-        permissions: ["manageApiKeys"],
+        filter: ({ permissionsUtils }) =>
+          permissionsUtils.canCreateApiKey() ||
+          permissionsUtils.canDeleteApiKey(),
       },
       {
         name: "Webhooks",
         href: "/settings/webhooks",
         path: /^settings\/webhooks/,
-        permissions: ["manageWebhooks"],
+        filter: ({ permissionsUtils }) =>
+          permissionsUtils.canViewEventWebhook(),
       },
       {
         name: "Logs",
         href: "/events",
         path: /^events/,
-        permissions: ["viewEvents"],
+        filter: ({ permissionsUtils }) => permissionsUtils.canViewAuditLogs(),
+      },
+      {
+        name: "Slack",
+        href: "/integrations/slack",
+        path: /^integrations\/slack/,
+        filter: ({ permissionsUtils, gb }) =>
+          permissionsUtils.canManageIntegrations() &&
+          !!gb?.isOn("slack-integration"),
+      },
+      {
+        name: "GitHub",
+        href: "/integrations/github",
+        path: /^integrations\/github/,
+        filter: ({ permissionsUtils, gb }) =>
+          permissionsUtils.canManageIntegrations() &&
+          !!gb?.isOn("github-integration"),
+      },
+      {
+        name: "Import your data",
+        href: "/importing",
+        path: /^importing/,
+        filter: ({ permissionsUtils, gb }) =>
+          permissionsUtils.canViewFeatureModal() &&
+          permissionsUtils.canCreateEnvironment({
+            projects: [],
+            id: "",
+          }) &&
+          permissionsUtils.canCreateProjects() &&
+          !!gb?.isOn("import-from-x"),
+      },
+      {
+        name: "Usage",
+        href: "/settings/usage",
+        path: /^settings\/usage/,
+        filter: ({ permissionsUtils, isCloud, gb }) =>
+          permissionsUtils.canViewUsage() &&
+          isCloud &&
+          !!gb?.isOn("cdn-usage-data"),
       },
       {
         name: "Billing",
         href: "/settings/billing",
         path: /^settings\/billing/,
-        cloudOnly: true,
-        permissions: ["manageBilling"],
+        filter: ({ permissionsUtils }) => permissionsUtils.canManageBilling(),
       },
       {
         name: "Admin",
         href: "/admin",
         path: /^admin/,
-        cloudOnly: true,
         divider: true,
-        superAdmin: true,
+        filter: ({ superAdmin, isMultiOrg }) => superAdmin && isMultiOrg,
       },
     ],
+  },
+];
+
+const breadcumbLinks = [
+  ...navlinks,
+  {
+    name: "Power Calculator",
+    path: /^power-calculator/,
+    subLinks: [] as SidebarLinkProps[],
   },
 ];
 
@@ -223,16 +379,12 @@ const otherPageTitles = [
     title: "Activity Feed",
   },
   {
-    path: /^experiments\/designer/,
-    title: "Visual Experiment Designer",
+    path: /^reports/,
+    title: "My Reports",
   },
   {
-    path: /^integrations\/vercel/,
-    title: "Vercel Integration",
-  },
-  {
-    path: /^integrations\/vercel\/configure/,
-    title: "Vercel Integration Configuration",
+    path: /^account\/personal-access-tokens/,
+    title: "Personal Access Tokens",
   },
   {
     path: /^getstarted/,
@@ -240,7 +392,7 @@ const otherPageTitles = [
   },
   {
     path: /^dashboard/,
-    title: "Program Management",
+    title: "Dashboard",
   },
 ];
 
@@ -261,13 +413,22 @@ const backgroundShade = (color: string) => {
 };
 
 const Layout = (): React.ReactElement => {
-  const [open, setOpen] = useState(false);
+  const { open, setOpen } = useSidebarOpen();
   const settings = useOrgSettings();
-  const { accountPlan } = useUser();
+  const permissionsUtil = usePermissionsUtil();
+  const { organization, canSubscribe } = useUser();
+  const growthbook = useGrowthBook<AppFeatures>();
+
+  // holdout aa-test, dogfooding
+  growthbook?.isOn("aa-test-holdout");
+
+  const { breadcrumb } = usePageHead();
 
   const [upgradeModal, setUpgradeModal] = useState(false);
-  // @ts-expect-error TS(2345) If you come across this, please fix it!: Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
-  const showUpgradeButton = ["oss", "starter"].includes(accountPlan);
+  const showUpgradeButton =
+    canSubscribe &&
+    permissionsUtil.canManageBilling() &&
+    !organization.isVercelIntegration;
 
   // hacky:
   const router = useRouter();
@@ -278,13 +439,18 @@ const Layout = (): React.ReactElement => {
     return null;
   }
 
-  let pageTitle: string;
+  let pageTitle = [...breadcrumb]
+    .reverse()
+    .map((b) => b.display)
+    .join(" - ");
+
+  // If no breadcrumb provided, try to figure out a page name based on the path
   otherPageTitles.forEach((o) => {
     if (!pageTitle && o.path.test(path)) {
       pageTitle = o.title;
     }
   });
-  navlinks.forEach((o) => {
+  breadcumbLinks.forEach((o) => {
     if (o.subLinks) {
       o.subLinks.forEach((s) => {
         if (!pageTitle && s.path.test(path)) {
@@ -324,8 +490,8 @@ const Layout = (): React.ReactElement => {
       {upgradeModal && (
         <UpgradeModal
           close={() => setUpgradeModal(false)}
-          reason=""
           source="layout"
+          commercialFeature={null}
         />
       )}
       {settings?.customized && (
@@ -339,38 +505,37 @@ const Layout = (): React.ReactElement => {
         <div className="">
           <div className="app-sidebar-header">
             <div className="app-sidebar-logo">
-              <Link href="/">
-                <a
-                  aria-current="page"
-                  className="app-sidebar-logo active"
-                  title="GrowthBook Home"
-                  onClick={() => setOpen(false)}
-                >
-                  <div className={styles.sidebarlogo}>
-                    {settings?.customized && settings?.logoPath ? (
-                      <>
-                        <img
-                          className={styles.userlogo}
-                          alt="GrowthBook"
-                          src={settings.logoPath}
-                        />
-                      </>
-                    ) : (
-                      <>
-                        <img
-                          className={styles.logo}
-                          alt="GrowthBook"
-                          src="/logo/growth-book-logomark-white.svg"
-                        />
-                        <img
-                          className={styles.logotext}
-                          alt="GrowthBook"
-                          src="/logo/growth-book-name-white.svg"
-                        />
-                      </>
-                    )}
-                  </div>
-                </a>
+              <Link
+                href="/"
+                aria-current="page"
+                className="app-sidebar-logo active"
+                title="GrowthBook Home"
+                onClick={() => setOpen(false)}
+              >
+                <div className={styles.sidebarlogo}>
+                  {settings?.customized && settings?.logoPath ? (
+                    <>
+                      <img
+                        className={styles.userlogo}
+                        alt="GrowthBook"
+                        src={settings.logoPath}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <img
+                        className={styles.logo}
+                        alt="GrowthBook"
+                        src="/logo/growth-book-logomark-white.svg"
+                      />
+                      <img
+                        className={styles.logotext}
+                        alt="GrowthBook"
+                        src="/logo/growth-book-name-white.svg"
+                      />
+                    </>
+                  )}
+                </div>
               </Link>
             </div>
             <div className={styles.mainmenu}>
@@ -416,32 +581,16 @@ const Layout = (): React.ReactElement => {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <div className="p-3">
+        <Flex p="3" direction="column" gap="4">
           {showUpgradeButton && (
-            <button
-              className="btn btn-premium btn-block font-weight-normal"
-              onClick={() => setUpgradeModal(true)}
-            >
-              {accountPlan === "oss" ? (
-                <>
-                  Try Enterprise <GBPremiumBadge />
-                </>
-              ) : (
-                <>
-                  Try Pro <GBPremiumBadge />
-                </>
-              )}
-            </button>
+            <WhiteButton onClick={() => setUpgradeModal(true)}>
+              <>Upgrade</>
+            </WhiteButton>
           )}
-          <a
-            href={inferDocUrl()}
-            className="btn btn-outline-light btn-block"
-            target="_blank"
-            rel="noreferrer"
-          >
-            View Docs <FaArrowRight className="ml-2" />
+          <a href={inferDocUrl()} target="_blank" rel="noreferrer">
+            <WhiteButton variant="outline">View docs</WhiteButton>
           </a>
-        </div>
+        </Flex>
         {build.sha && (
           <div className="px-3 my-1 text-center">
             <small>
@@ -452,7 +601,7 @@ const Layout = (): React.ReactElement => {
                 rel="noreferrer"
                 className="text-white"
               >
-                {build.sha.substr(0, 7)}
+                {build.lastVersion}+{build.sha.substr(0, 7)}
               </a>{" "}
               {build.date && (
                 <span className="text-muted">({build.date.substr(0, 10)})</span>
@@ -463,7 +612,6 @@ const Layout = (): React.ReactElement => {
       </div>
 
       <TopNav
-        // @ts-expect-error TS(2454) If you come across this, please fix it!: Variable 'pageTitle' is used before being assigned... Remove this comment to see the full error message
         pageTitle={pageTitle}
         showNotices={true}
         toggleLeftMenu={() => setOpen(!open)}

@@ -5,22 +5,33 @@ import {
   TokenSet,
   generators,
   Client,
+  custom,
 } from "openid-client";
-import jwtExpress from "express-jwt";
+
+import jwtExpress, { RequestHandler } from "express-jwt";
 import jwks from "jwks-rsa";
-import { AuthRequest } from "../../types/AuthRequest";
-import { MemoryCache } from "../cache";
+import { SSO_CONFIG } from "shared/enterprise";
+import { AuthRequest } from "back-end/src/types/AuthRequest";
+import { MemoryCache } from "back-end/src/services/cache";
 import {
   SSOConnectionInterface,
   UnauthenticatedResponse,
-} from "../../../types/sso-connection";
-import { AuthChecksCookie, SSOConnectionIdCookie } from "../../util/cookie";
-import { APP_ORIGIN, IS_CLOUD, SSO_CONFIG } from "../../util/secrets";
-import { getSSOConnectionById } from "../../models/SSOConnectionModel";
+} from "back-end/types/sso-connection";
 import {
-  getAuditableUserPropertiesFromRequest,
+  AuthChecksCookie,
+  SSOConnectionIdCookie,
+} from "back-end/src/util/cookie";
+import { APP_ORIGIN, IS_CLOUD, USE_PROXY } from "back-end/src/util/secrets";
+import { getSSOConnectionById } from "back-end/src/models/SSOConnectionModel";
+import {
+  getUserLoginPropertiesFromRequest,
   trackLoginForUser,
-} from "../users";
+} from "back-end/src/services/users";
+import { getHttpOptions } from "back-end/src/util/http.util";
+import {
+  VERCEL_CLIENT_ID,
+  VERCEL_CLIENT_SECRET,
+} from "back-end/src/services/vercel-native-integration.service";
 import { AuthConnection, TokensResponse } from "./AuthConnection";
 
 type AuthChecks = {
@@ -28,6 +39,12 @@ type AuthChecks = {
   state: string;
   code_verifier: string;
 };
+
+if (USE_PROXY) {
+  custom.setHttpOptionsDefaults(getHttpOptions());
+}
+
+const passthroughQueryParams = ["hypgen", "hypothesis"];
 
 // Micro-Cache with a TTL of 30 seconds, avoids hitting Mongo on every request
 const ssoConnectionCache = new MemoryCache(async (ssoConnectionId: string) => {
@@ -40,9 +57,19 @@ const ssoConnectionCache = new MemoryCache(async (ssoConnectionId: string) => {
 
 const clientMap: Map<SSOConnectionInterface, Client> = new Map();
 
+const jwksMiddlewareCache: { [key: string]: RequestHandler } = {};
+
 export class OpenIdAuthConnection implements AuthConnection {
-  async refresh(req: Request, refreshToken: string): Promise<TokensResponse> {
-    const { client } = await getConnectionFromRequest(req);
+  async refresh(
+    req: Request,
+    res: Response,
+    refreshToken: string,
+  ): Promise<TokensResponse> {
+    const { client, connection } = await getConnectionFromRequest(req, res);
+
+    if (connection.id?.startsWith("vercel:")) {
+      throw new Error("Session expired. Must re-authenticate in Vercel.");
+    }
 
     const tokenSet = await client.refresh(refreshToken);
 
@@ -58,9 +85,9 @@ export class OpenIdAuthConnection implements AuthConnection {
   }
   async getUnauthenticatedResponse(
     req: Request,
-    res: Response
+    res: Response,
   ): Promise<UnauthenticatedResponse> {
-    const { connection, client } = await getConnectionFromRequest(req);
+    const { connection, client } = await getConnectionFromRequest(req, res);
     const redirectURI = this.getRedirectURI(connection, client, req, res);
 
     // If there's an existing incomplete auth session for this Cloud SSO provider,
@@ -74,7 +101,7 @@ export class OpenIdAuthConnection implements AuthConnection {
     };
   }
   async processCallback(req: Request, res: Response): Promise<TokensResponse> {
-    const { connection, client } = await getConnectionFromRequest(req);
+    const { connection, client } = await getConnectionFromRequest(req, res);
 
     // Get rid of temporary codeVerifier cookie
     const checks = this.getAuthChecks(req);
@@ -94,12 +121,12 @@ export class OpenIdAuthConnection implements AuthConnection {
       {
         code_verifier: checks.code_verifier,
         state: checks.state,
-      }
+      },
     );
 
     const email = tokenSet.claims().email;
     if (email) {
-      const trackingProperties = getAuditableUserPropertiesFromRequest(req);
+      const trackingProperties = getUserLoginPropertiesFromRequest(req);
       trackLoginForUser({
         ...trackingProperties,
         email,
@@ -112,8 +139,8 @@ export class OpenIdAuthConnection implements AuthConnection {
       expiresIn: this.getMaxAge(tokenSet),
     };
   }
-  async logout(req: Request): Promise<string> {
-    const { connection } = await getConnectionFromRequest(req);
+  async logout(req: Request, res: Response): Promise<string> {
+    const { connection } = await getConnectionFromRequest(req, res);
     if (connection?.metadata?.logout_endpoint) {
       return connection.metadata.logout_endpoint as string;
     }
@@ -122,10 +149,13 @@ export class OpenIdAuthConnection implements AuthConnection {
   async middleware(
     req: AuthRequest,
     res: Response,
-    next: NextFunction
+    next: NextFunction,
   ): Promise<void> {
     try {
-      const { connection } = await getConnectionFromRequest(req as Request);
+      const { connection } = await getConnectionFromRequest(
+        req as Request,
+        res,
+      );
 
       // Store the ssoConnectionId in the request
       req.loginMethod = connection;
@@ -138,21 +168,34 @@ export class OpenIdAuthConnection implements AuthConnection {
 
       if (!jwksUri || !algorithms || !issuer) {
         throw new Error(
-          "Missing SSO metadata: 'issuer', 'jwks_uri', and/or 'id_token_signing_alg_values_supported'"
+          "Missing SSO metadata: 'issuer', 'jwks_uri', and/or 'id_token_signing_alg_values_supported'",
         );
       }
 
-      const middleware = jwtExpress({
-        secret: jwks.expressJwtSecret({
-          cache: true,
-          rateLimit: true,
-          jwksRequestsPerMinute: 5,
-          jwksUri,
-        }),
-        audience: connection.clientId,
+      const cacheKey = JSON.stringify([
+        jwksUri,
+        connection.clientId,
         issuer,
         algorithms,
-      });
+      ]);
+
+      let middleware = jwksMiddlewareCache[cacheKey];
+      if (!middleware) {
+        middleware = jwtExpress({
+          secret: jwks.expressJwtSecret({
+            cache: true,
+            cacheMaxEntries: 200,
+            cacheMaxAge: 10 * 60 * 60 * 1000,
+            rateLimit: false,
+            jwksRequestsPerMinute: 10,
+            jwksUri,
+          }),
+          audience: connection.clientId,
+          issuer,
+          algorithms,
+        });
+        jwksMiddlewareCache[cacheKey] = middleware;
+      }
       middleware(req as Request, res, next);
     } catch (e) {
       next(e);
@@ -178,8 +221,16 @@ export class OpenIdAuthConnection implements AuthConnection {
     ssoConnection: SSOConnectionInterface,
     client: Client,
     req: Request,
-    res: Response
+    res: Response,
   ) {
+    // Vercel has a provider-initiated SSO flow that differs from the normal OAuth flow
+    if (ssoConnection.id?.startsWith("vercel:")) {
+      const installationId = ssoConnection.id.split(":")[1];
+      return `https://vercel.com/sso/integrations/${
+        process.env.VERCEL_INTEGRATION_SLUG || "growthbook"
+      }/${installationId}`;
+    }
+
     const code_verifier = generators.codeVerifier();
     const code_challenge = generators.codeChallenge(code_verifier);
 
@@ -200,7 +251,7 @@ export class OpenIdAuthConnection implements AuthConnection {
       code_challenge,
       code_challenge_method: "S256",
       state,
-      audience: (ssoConnection.metadata?.audience ||
+      audience: (ssoConnection.metadata?.audience ??
         ssoConnection.clientId) as string,
     });
 
@@ -210,15 +261,50 @@ export class OpenIdAuthConnection implements AuthConnection {
       }
     }
 
+    for (const [k, v] of Object.entries(req.query)) {
+      if (passthroughQueryParams.includes(k)) {
+        url += `&${k}=${v}`;
+      }
+    }
+
     return url;
   }
 }
 
-async function getConnectionFromRequest(req: Request) {
+async function getConnectionFromRequest(req: Request, res: Response) {
   // First, get the connection info
-  const ssoConnectionId = SSOConnectionIdCookie.getValue(req);
+  let ssoConnectionId = SSOConnectionIdCookie.getValue(req);
+
+  let persistSSOConnectionId = false;
+
+  // If there's no ssoConnectionId in the cookie, look in the querystring instead
+  // This is used for IdP-initiated Enterprise SSO on Cloud
+  if (IS_CLOUD && !ssoConnectionId) {
+    const ssoConnectionIdFromQuery = req.query.ssoId;
+    if (
+      ssoConnectionIdFromQuery &&
+      typeof ssoConnectionIdFromQuery === "string"
+    ) {
+      persistSSOConnectionId = true;
+      ssoConnectionId = ssoConnectionIdFromQuery;
+    }
+  }
+
   let connection: SSOConnectionInterface;
-  if (IS_CLOUD && ssoConnectionId) {
+  if (IS_CLOUD && ssoConnectionId.startsWith("vercel:")) {
+    connection = {
+      id: ssoConnectionId,
+      clientId: VERCEL_CLIENT_ID,
+      clientSecret: VERCEL_CLIENT_SECRET,
+      metadata: {
+        issuer: "https://marketplace.vercel.com",
+        jwks_uri: "https://marketplace.vercel.com/.well-known/jwks",
+        id_token_signing_alg_values_supported: ["RS256"],
+        authorization_endpoint: "https://api.vercel.com/oauth/authorize",
+        token_endpoint: "https://api.vercel.com/oauth/access_token",
+      },
+    };
+  } else if (IS_CLOUD && ssoConnectionId) {
     connection = await ssoConnectionCache.get(ssoConnectionId);
   } else if (SSO_CONFIG) {
     connection = SSO_CONFIG;
@@ -240,6 +326,11 @@ async function getConnectionFromRequest(req: Request) {
         : "none",
     });
     clientMap.set(connection, client);
+  }
+
+  // If we've made it this far, the connection was found and we should persist it in a cookie
+  if (persistSSOConnectionId && ssoConnectionId) {
+    SSOConnectionIdCookie.setValue(ssoConnectionId, req, res);
   }
 
   return { connection, client };

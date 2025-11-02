@@ -5,15 +5,13 @@ import { DataSourceInterfaceWithParams } from "back-end/types/datasource";
 import CodeTextArea from "@/components/Forms/CodeTextArea";
 import Code from "@/components/SyntaxHighlighting/Code";
 import Modal from "@/components/Modal";
-import { DataSourceQueryEditingModalBaseProps } from "../types";
+import { DataSourceQueryEditingModalBaseProps } from "@/components/Settings/EditDataSource/types";
 
 type EditJupyterNotebookQueryRunnerProps = DataSourceQueryEditingModalBaseProps;
 
-export const EditJupyterNotebookQueryRunner: FC<EditJupyterNotebookQueryRunnerProps> = ({
-  dataSource,
-  onSave,
-  onCancel,
-}) => {
+export const EditJupyterNotebookQueryRunner: FC<
+  EditJupyterNotebookQueryRunnerProps
+> = ({ dataSource, onSave, onCancel }) => {
   if (!dataSource) {
     throw new Error("ImplementationError: dataSource cannot be null");
   }
@@ -32,6 +30,7 @@ export const EditJupyterNotebookQueryRunner: FC<EditJupyterNotebookQueryRunnerPr
 
   return (
     <Modal
+      trackingEventModalType=""
       open={true}
       submit={handleSubmit}
       close={onCancel}

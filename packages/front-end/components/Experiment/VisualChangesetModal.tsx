@@ -1,4 +1,4 @@
-import { VisualChangesetInterface } from "@/../back-end/types/visual-changeset";
+import { VisualChangesetInterface } from "back-end/types/visual-changeset";
 import { FC, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
@@ -7,9 +7,9 @@ import { isURLTargeted, UrlTarget } from "@growthbook/growthbook";
 import SelectField from "@/components/Forms/SelectField";
 import { useAuth } from "@/services/auth";
 import Tooltip from "@/components/Tooltip/Tooltip";
-import Field from "../Forms/Field";
-import { GBAddCircle } from "../Icons";
-import Modal from "../Modal";
+import Field from "@/components/Forms/Field";
+import { GBAddCircle } from "@/components/Icons";
+import Modal from "@/components/Modal";
 
 const defaultType = "simple";
 
@@ -19,7 +19,19 @@ const VisualChangesetModal: FC<{
   visualChangeset?: VisualChangesetInterface;
   mutate: () => void;
   close: () => void;
-}> = ({ mode, experiment, visualChangeset, mutate, close }) => {
+  onCreate?: (vc: VisualChangesetInterface) => void;
+  cta?: string;
+  source?: string;
+}> = ({
+  mode,
+  experiment,
+  visualChangeset,
+  mutate,
+  close,
+  onCreate,
+  cta,
+  source,
+}) => {
   const { apiCall } = useAuth();
 
   let forceAdvancedMode = false;
@@ -63,18 +75,22 @@ const VisualChangesetModal: FC<{
       ];
     }
     if (mode === "add") {
-      await apiCall(`/experiments/${experiment.id}/visual-changeset`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const res = await apiCall<{ visualChangeset: VisualChangesetInterface }>(
+        `/experiments/${experiment.id}/visual-changeset`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+      mutate();
+      res.visualChangeset && onCreate && onCreate(res.visualChangeset);
     } else {
       await apiCall(`/visual-changesets/${visualChangeset?.id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
+      mutate();
     }
-    mutate();
-    close();
   });
 
   const editorUrlLabel = !showAdvanced
@@ -90,11 +106,13 @@ const VisualChangesetModal: FC<{
     !showAdvanced ||
     isURLTargeted(
       form.watch("editorUrl"),
-      form.watch("urlPatterns") as UrlTarget[]
+      form.watch("urlPatterns") as UrlTarget[],
     );
 
   return (
     <Modal
+      trackingEventModalType="visual-changeset-modal"
+      trackingEventModalSource={source}
       open
       close={close}
       size="lg"
@@ -102,6 +120,7 @@ const VisualChangesetModal: FC<{
         mode === "add" ? "Add" : "Modify"
       } Visual Changes URL targeting`}
       submit={onSubmit}
+      cta={cta}
     >
       <Field
         required
@@ -255,7 +274,8 @@ const VisualChangesetModal: FC<{
             });
           }}
         >
-          <GBAddCircle /> Add URL Target
+          <GBAddCircle className="mr-1" />
+          Add URL Target
         </button>
       </div>
 
